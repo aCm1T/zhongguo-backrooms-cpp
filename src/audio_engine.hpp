@@ -20,6 +20,22 @@ public:
     void setVolume(float value){volume_=std::clamp(value,0.f,1.f);}
     bool active()const{return device_!=0;}
 
+    void playGunshot(bool heavy){
+        sfxKind_=heavy?2:1;
+        sfxEnvelope_=heavy?1.f:.82f;
+        sfxClock_=0.f;
+    }
+    void playPortal(){
+        sfxKind_=3;
+        sfxEnvelope_=1.f;
+        sfxClock_=0.f;
+    }
+    void playReload(){
+        sfxKind_=4;
+        sfxEnvelope_=.7f;
+        sfxClock_=0.f;
+    }
+
     void update(int zone,bool moving,float footGain=1.f){
         if(!device_)return;
         const Uint32 target=static_cast<Uint32>(obtained_.freq*obtained_.channels*sizeof(float)*.18);
@@ -39,6 +55,24 @@ public:
             if(moving){stepClock_+=dt;if(stepClock_>stepPeriod){stepClock_=0;stepEnvelope_=1.f;}}
             else stepClock_=std::min(stepClock_,.2f);
             if(stepEnvelope_>.001f){s+=(noise*.15f+.08f*std::sin(tau*74.f*phase_))*stepEnvelope_*footGain;stepEnvelope_*=.994f;}
+
+            if(sfxEnvelope_>.001f){
+                sfxClock_+=dt;
+                float burst=0.f;
+                if(sfxKind_==1){ // USP
+                    burst=(noise*.55f+.35f*std::sin(tau*920.f*sfxClock_))*std::exp(-sfxClock_*28.f);
+                }else if(sfxKind_==2){ // AK
+                    burst=(noise*.7f+.25f*std::sin(tau*480.f*sfxClock_)+.15f*std::sin(tau*180.f*sfxClock_))*std::exp(-sfxClock_*18.f);
+                }else if(sfxKind_==3){ // portal
+                    burst=.28f*std::sin(tau*(420.f+sfxClock_*900.f)*sfxClock_)*std::exp(-sfxClock_*6.f)
+                         +.12f*std::sin(tau*180.f*sfxClock_);
+                }else if(sfxKind_==4){ // reload click
+                    burst=.18f*noise*std::exp(-sfxClock_*14.f)+.08f*std::sin(tau*220.f*sfxClock_)*std::exp(-sfxClock_*8.f);
+                }
+                s+=burst*sfxEnvelope_;
+                sfxEnvelope_*=sfxKind_==3?.991f:.986f;
+            }
+
             s=std::tanh(s*1.8f)*volume_;
             for(int c=0;c<obtained_.channels;++c)buffer_[i*obtained_.channels+c]=s*(c==0?.98f:1.02f);
         }
@@ -48,4 +82,5 @@ private:
     float randomSigned(){rng_=rng_*1664525u+1013904223u;return static_cast<float>((rng_>>8)&0xFFFFu)/32767.5f-1.f;}
     SDL_AudioDeviceID device_{};SDL_AudioSpec obtained_{};std::vector<float> buffer_;
     std::uint32_t rng_{0x91e10da5u};float volume_{.65f},phase_{},noiseSmooth_{},stepClock_{},stepEnvelope_{};
+    int sfxKind_{};float sfxEnvelope_{},sfxClock_{};
 };

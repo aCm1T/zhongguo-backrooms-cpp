@@ -13,6 +13,18 @@ uniform int uShowHud;
 uniform int uQuality; // 0 low, 1 medium, 2 high
 uniform sampler2D uUiTexture;
 uniform vec2 uSealPos;
+uniform int uWeapon;          // 0 portal gun, 1 USP, 2 AK
+uniform float uMuzzle;
+uniform float uRecoil;
+uniform int uPortalBlueOn;
+uniform int uPortalOrangeOn;
+uniform vec3 uPortalBluePos;
+uniform vec3 uPortalBlueN;
+uniform vec3 uPortalOrangePos;
+uniform vec3 uPortalOrangeN;
+uniform vec3 uImpactPos;
+uniform float uImpactLife;
+uniform int uDestroyedMask;
 
 #define MAX_STEPS 92
 #define MAX_DIST 70.0
@@ -185,6 +197,8 @@ vec2 mapLingnan(vec3 p, vec2 r) {
     return r;
 }
 
+bool coverAlive(int bit) { return (uDestroyedMask & (1 << bit)) == 0; }
+
 // Compressed Dust II: T spawn south, A north-east, B north-west, mid doors center.
 vec2 mapDust2(vec3 p) {
     vec2 r = vec2(p.y, 1.0); // desert floor
@@ -198,8 +212,8 @@ vec2 mapDust2(vec3 p) {
     r = take(r, sdBox(p - vec3(-5.2, 1.4, 16.0), vec3(.25, 1.4, 3.2)), 19.0);
     r = take(r, sdBox(p - vec3( 5.2, 1.4, 16.0), vec3(.25, 1.4, 3.2)), 19.0);
     r = take(r, sdBox(p - vec3(0.0, 1.4, 19.4), vec3(5.4, 1.4, .25)), 19.0);
-    r = take(r, sdBox(p - vec3(-3.4, .55, 13.2), vec3(.7, .55, .55)), 5.0);
-    r = take(r, sdBox(p - vec3( 3.2, .55, 13.4), vec3(.6, .55, .5)), 5.0);
+    if (coverAlive(0)) r = take(r, sdBox(p - vec3(-3.4, .55, 13.2), vec3(.7, .55, .55)), 5.0);
+    if (coverAlive(1)) r = take(r, sdBox(p - vec3( 3.2, .55, 13.4), vec3(.6, .55, .5)), 5.0);
 
     // Mid doors corridor: twin adobe walls with walkable gaps to Long A / B tunnels
     r = take(r, sdBox(p - vec3(-3.6, 2.0, 6.5), vec3(.35, 2.0, 3.0)), 19.0);
@@ -213,8 +227,8 @@ vec2 mapDust2(vec3 p) {
     r = take(r, sdBox(p - vec3(-1.55, 1.8, .6), vec3(.18, 1.8, .12)), 17.0);
     r = take(r, sdBox(p - vec3( 1.55, 1.8, .6), vec3(.18, 1.8, .12)), 17.0);
     r = take(r, sdBox(p - vec3(0.0, 3.55, .6), vec3(1.75, .18, .12)), 17.0);
-    r = take(r, sdBox(p - vec3(-1.1, .45, 2.2), vec3(.55, .45, .45)), 5.0);
-    r = take(r, sdBox(p - vec3( 1.2, .45, -1.0), vec3(.5, .45, .5)), 5.0);
+    if (coverAlive(2)) r = take(r, sdBox(p - vec3(-1.1, .45, 2.2), vec3(.55, .45, .45)), 5.0);
+    if (coverAlive(3)) r = take(r, sdBox(p - vec3( 1.2, .45, -1.0), vec3(.5, .45, .5)), 5.0);
 
     // CT mid ramp / steps toward short A
     for (int i = 0; i < 5; ++i) {
@@ -229,9 +243,9 @@ vec2 mapDust2(vec3 p) {
     r = take(r, sdBox(p - vec3(13.6, 2.2, -6.0), vec3(.35, 2.2, 12.0)), 19.0);
     r = take(r, sdBox(p - vec3(10.9, 2.2, 6.2), vec3(2.9, 2.2, .35)), 19.0);
     r = take(r, sdBox(p - vec3(10.9, 2.2, -18.2), vec3(2.9, 2.2, .35)), 19.0);
-    r = take(r, sdBox(p - vec3(10.0, .5, -4.0), vec3(.55, .5, .55)), 5.0);
-    r = take(r, sdBox(p - vec3(11.2, .5, -10.0), vec3(.6, .5, .5)), 5.0);
-    r = take(r, sdBox(p - vec3(9.8, .5, -14.5), vec3(.55, .5, .55)), 5.0);
+    if (coverAlive(4)) r = take(r, sdBox(p - vec3(10.0, .5, -4.0), vec3(.55, .5, .55)), 5.0);
+    if (coverAlive(5)) r = take(r, sdBox(p - vec3(11.2, .5, -10.0), vec3(.6, .5, .5)), 5.0);
+    if (coverAlive(6)) r = take(r, sdBox(p - vec3(9.8, .5, -14.5), vec3(.55, .5, .55)), 5.0);
 
     // Short A / catwalk boxes
     r = take(r, sdBox(p - vec3(5.5, .65, -12.0), vec3(.9, .65, .9)), 5.0);
@@ -241,8 +255,8 @@ vec2 mapDust2(vec3 p) {
 
     // A site platform + CT-side cover
     r = take(r, sdBox(p - vec3(2.0, .12, -20.0), vec3(4.5, .12, 3.2)), 5.0);
-    r = take(r, sdBox(p - vec3(-1.2, .7, -18.5), vec3(.7, .7, .55)), 5.0);
-    r = take(r, sdBox(p - vec3(4.8, .7, -21.5), vec3(.65, .7, .55)), 5.0);
+    if (coverAlive(7)) r = take(r, sdBox(p - vec3(-1.2, .7, -18.5), vec3(.7, .7, .55)), 5.0);
+    if (coverAlive(8)) r = take(r, sdBox(p - vec3(4.8, .7, -21.5), vec3(.65, .7, .55)), 5.0);
     r = take(r, sdBox(p - vec3(0.0, 1.6, -23.5), vec3(5.5, 1.6, .3)), 19.0);
     r = take(r, sdRoundBox(p - vec3(-3.5, .85, -20.5), vec3(1.6, .55, .7), .08), 13.0); // car
 
@@ -256,15 +270,15 @@ vec2 mapDust2(vec3 p) {
     r = take(r, sdBox(p - vec3(-11.6, 2.0, -7.2), vec3(1.2, 2.0, .35)), 19.0);
     r = take(r, sdBox(p - vec3(-8.4, 2.0, -7.2), vec3(1.2, 2.0, .35)), 19.0);
     // center gap ~x=-10 for B exit
-    r = take(r, sdBox(p - vec3(-8.5, .5, 4.0), vec3(.5, .5, .5)), 5.0);
+    if (coverAlive(9)) r = take(r, sdBox(p - vec3(-8.5, .5, 4.0), vec3(.5, .5, .5)), 5.0);
 
     // B site
     r = take(r, sdBox(p - vec3(-8.0, .12, -15.5), vec3(4.0, .12, 3.5)), 5.0);
     r = take(r, sdBox(p - vec3(-11.5, 1.4, -12.0), vec3(.3, 1.4, 3.0)), 19.0);
     r = take(r, sdBox(p - vec3(-4.5, 1.4, -15.5), vec3(.3, 1.4, 3.5)), 19.0);
     r = take(r, sdBox(p - vec3(-8.0, 1.4, -19.2), vec3(4.0, 1.4, .3)), 19.0);
-    r = take(r, sdBox(p - vec3(-6.2, .55, -14.0), vec3(.7, .55, .55)), 5.0);
-    r = take(r, sdBox(p - vec3(-9.5, .55, -16.8), vec3(.65, .55, .6)), 5.0);
+    if (coverAlive(10)) r = take(r, sdBox(p - vec3(-6.2, .55, -14.0), vec3(.7, .55, .55)), 5.0);
+    if (coverAlive(11)) r = take(r, sdBox(p - vec3(-9.5, .55, -16.8), vec3(.65, .55, .6)), 5.0);
     r = take(r, sdRoundBox(p - vec3(-10.5, .8, -14.2), vec3(1.4, .5, .65), .07), 13.0); // window car
 
     // CT spawn building stub near A (north-east)
@@ -274,6 +288,37 @@ vec2 mapDust2(vec3 p) {
     // Scaffold / scaffolding accents
     r = take(r, sdCylinder(p - vec3(3.8, 1.8, -10.5), .08, 1.8), 17.0);
     r = take(r, sdCylinder(p - vec3(-5.5, 1.6, -13.0), .08, 1.6), 17.0);
+    return r;
+}
+
+vec3 portalBasisRight(vec3 n) {
+    vec3 up = abs(n.y) > .92 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+    return normalize(cross(up, n));
+}
+
+float portalDisk(vec3 p, vec3 center, vec3 n) {
+    vec3 d = p - center;
+    float plane = abs(dot(d, n));
+    vec3 r = portalBasisRight(n);
+    vec3 u = cross(n, r);
+    float x = dot(d, r);
+    float y = dot(d, u);
+    float radial = length(vec2(x / .58, y / .95));
+    float rim = abs(radial - 1.0) - .05;
+    float face = max(plane - .025, radial - 1.0);
+    return min(max(rim, plane - .04), face);
+}
+
+vec2 mapPortals(vec3 p, vec2 r) {
+    if (uPortalBlueOn != 0) {
+        r = take(r, portalDisk(p, uPortalBluePos, normalize(uPortalBlueN)), 24.0);
+    }
+    if (uPortalOrangeOn != 0) {
+        r = take(r, portalDisk(p, uPortalOrangePos, normalize(uPortalOrangeN)), 25.0);
+    }
+    if (uImpactLife > .01) {
+        r = take(r, sdSphere(p - uImpactPos, .07 + .05 * (1.0 - uImpactLife)), 26.0);
+    }
     return r;
 }
 
@@ -293,7 +338,8 @@ vec2 mapScene(vec3 p) {
         else if (uZone == 7) r = mapDongbei(p, r);
         else if (uZone == 8) r = mapLingnan(p, r);
     }
-    return sealGeometry(p, r);
+    r = sealGeometry(p, r);
+    return mapPortals(p, r);
 }
 
 vec2 trace(vec3 ro, vec3 rd, float maxDistance) {
@@ -380,6 +426,9 @@ vec3 palette(float id, vec3 p) {
     else if (id < 21.5) c = vec3(1.0,.08,.035);
     else if (id < 22.5) c = vec3(.2,1.0,1.0);
     else if (id < 23.5) c = vec3(1.0,.23,.55);
+    else if (id < 24.5) c = vec3(.15,.55,1.0);   // blue portal
+    else if (id < 25.5) c = vec3(1.0,.42,.08);    // orange portal
+    else if (id < 26.5) c = vec3(.08,.07,.05);    // bullet scar
     else c = vec3(.65,.86,.95);
     if (id == 3.0 && uZone == 1) {
         float brick = step(.92, fract(p.y * 2.4)) + step(.94, fract((p.z + floor(p.y*2.4)*.3)*1.2));
@@ -429,14 +478,93 @@ vec3 shadeSurface(vec3 ro, vec3 rd, vec2 hit, bool secondary) {
     vec3 warm = (uZone==3||uZone==7) ? vec3(.55,.82,1.0) :
                 (uZone==9) ? vec3(1.0,.82,.55) : vec3(1.0,.72,.43);
     vec3 col = base * (.13 + .10 * max(n.y,0.0) + diff * shadow * attenuation * 4.2 * warm) * ao;
-    float emissive = step(20.5, hit.y);
-    col += base * emissive * (hit.y < 21.5 ? 2.4 : 1.25);
+    float emissive = step(20.5, hit.y) * step(hit.y, 23.5)
+                   + step(23.5, hit.y) * step(hit.y, 25.5) * 1.8
+                   + step(25.5, hit.y) * step(hit.y, 26.5) * uImpactLife * 2.5;
+    col += base * emissive * (hit.y < 21.5 ? 2.4 : (hit.y < 23.5 ? 1.25 : 1.6));
     float spec = pow(max(dot(reflect(-l,n),-rd),0.0),34.0);
     col += spec * shadow * .35;
     return col;
 }
 
 float hash21(vec2 p) { return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+
+bool insidePortal(vec3 p, vec3 center, vec3 n) {
+    vec3 d = p - center;
+    if (abs(dot(d, n)) > .12) return false;
+    vec3 r = portalBasisRight(n);
+    vec3 u = cross(n, r);
+    float x = dot(d, r) / .58;
+    float y = dot(d, u) / .95;
+    return x * x + y * y <= 1.0;
+}
+
+void portalFrame(vec3 n, out vec3 r, out vec3 u) {
+    r = portalBasisRight(n);
+    u = cross(n, r);
+}
+
+void transferPortal(vec3 pos, vec3 rd, vec3 fromPos, vec3 fromN, vec3 toPos, vec3 toN,
+                    out vec3 outPos, out vec3 outRd) {
+    fromN = normalize(fromN); toN = normalize(toN);
+    vec3 fr, fu, tr, tu;
+    portalFrame(fromN, fr, fu);
+    portalFrame(toN, tr, tu);
+    tr = -tr;
+    vec3 d = pos - fromPos;
+    float x = dot(d, fr), y = dot(d, fu), z = dot(d, fromN);
+    outPos = toPos + tr * x + tu * y - toN * z + toN * .06;
+    outRd = normalize(tr * dot(rd, fr) + tu * dot(rd, fu) - toN * dot(rd, fromN));
+}
+
+float viewmodelGun(vec3 p) {
+    // Camera-local gun sitting in the lower-right of the view.
+    p.y += uRecoil * .12;
+    p.z += uRecoil * .05;
+    float body = sdRoundBox(p - vec3(.28, -.22, .55), vec3(.05, .055, .22), .02);
+    float barrel = sdCylinder((p - vec3(.28, -.18, .78)).xzy, .018, .16);
+    float grip = sdRoundBox(p - vec3(.28, -.32, .48), vec3(.035, .08, .05), .015);
+    float magazine = sdRoundBox(p - vec3(.28, -.36, .52), vec3(.02, .07, .04), .01);
+    float d = min(body, min(barrel, min(grip, magazine)));
+    if (uWeapon == 0) {
+        float dish = sdCylinder((p - vec3(.34, -.16, .62)).xzy, .05, .03);
+        float prong = sdBox(p - vec3(.34, -.10, .62), vec3(.012, .05, .012));
+        d = min(d, min(dish, prong));
+    } else if (uWeapon == 2) {
+        float stock = sdRoundBox(p - vec3(.28, -.20, .34), vec3(.04, .045, .1), .015);
+        d = min(d, stock);
+    }
+    return d;
+}
+
+vec3 shadeViewmodel(vec2 uv) {
+    vec3 rd = normalize(vec3(uv.x, uv.y, 1.35));
+    float t = 0.0;
+    bool hit = false;
+    for (int i = 0; i < 36; ++i) {
+        vec3 p = rd * t;
+        float d = viewmodelGun(p);
+        if (d < .002) { hit = true; break; }
+        t += d;
+        if (t > 1.4) break;
+    }
+    if (!hit) return vec3(-1.0);
+    vec3 p = rd * t;
+    vec2 e = vec2(.002, 0.0);
+    vec3 n = normalize(vec3(
+        viewmodelGun(p + e.xyy) - viewmodelGun(p - e.xyy),
+        viewmodelGun(p + e.yxy) - viewmodelGun(p - e.yxy),
+        viewmodelGun(p + e.yyx) - viewmodelGun(p - e.yyx)));
+    vec3 base = uWeapon == 0 ? vec3(.72, .78, .82) :
+                uWeapon == 1 ? vec3(.18, .18, .16) : vec3(.12, .14, .11);
+    float lite = .25 + .75 * max(dot(n, normalize(vec3(-.2, .6, -.5))), 0.0);
+    vec3 col = base * lite;
+    if (uMuzzle > .02 && uWeapon != 0) {
+        float flash = exp(-length(p - vec3(.28, -.16, .95)) * 28.0) * uMuzzle;
+        col += vec3(1.0, .72, .28) * flash * 2.2;
+    }
+    return col;
+}
 
 void main() {
     vec2 uv = (gl_FragCoord.xy * 2.0 - uResolution.xy) / uResolution.y;
@@ -450,7 +578,22 @@ void main() {
 
     vec2 hit = trace(ro,rd,MAX_DIST);
     vec3 color = shadeSurface(ro,rd,hit,false);
-    if (hit.y >= 0.0) {
+
+    // One portal recursion: looking into a linked pair reveals the exit view.
+    if (hit.y >= 23.5 && hit.y < 25.5 && uPortalBlueOn != 0 && uPortalOrangeOn != 0) {
+        vec3 p = ro + rd * hit.x;
+        bool blueHit = hit.y < 24.5;
+        vec3 fromPos = blueHit ? uPortalBluePos : uPortalOrangePos;
+        vec3 fromN = blueHit ? uPortalBlueN : uPortalOrangeN;
+        vec3 toPos = blueHit ? uPortalOrangePos : uPortalBluePos;
+        vec3 toN = blueHit ? uPortalOrangeN : uPortalBlueN;
+        if (insidePortal(p, fromPos, normalize(fromN))) {
+            vec3 pro, prd;
+            transferPortal(p, rd, fromPos, fromN, toPos, toN, pro, prd);
+            vec2 ph = trace(pro, prd, 36.0);
+            color = mix(color, shadeSurface(pro, prd, ph, true), .92);
+        }
+    } else if (hit.y >= 0.0) {
         vec3 p = ro + rd * hit.x;
         vec3 n = normalAt(p);
         float refl = reflectivity(hit.y);
@@ -480,6 +623,12 @@ void main() {
         color += vec3(.55,.42,.22)*dust*.35;
     }
 
+    // First-person weapon viewmodel (camera-local SDF).
+    if (uShowHud != 0) {
+        vec3 gun = shadeViewmodel(uv);
+        if (gun.x >= 0.0) color = gun;
+    }
+
     color = color / (color + vec3(1.0));
     color = pow(color,vec3(.82));
     float vignette = 1.0 - .30*dot(uv*.52,uv*.52);
@@ -489,8 +638,11 @@ void main() {
     if (uShowHud != 0) {
         // Minimal diegetic HUD: crosshair, regional index, and eight memory pips.
         vec2 px = abs(gl_FragCoord.xy-uResolution*.5);
-        float crosshair = max(step(px.x,8.0)*step(px.y,0.65),step(px.y,8.0)*step(px.x,0.65));
-        color = mix(color,vec3(.9,.85,.72),crosshair*.75);
+        float gap = uWeapon == 0 ? 5.0 : 2.0;
+        float crosshair = max(step(px.x,8.0)*step(px.y,0.65)*step(gap,px.x),
+                              step(px.y,8.0)*step(px.x,0.65)*step(gap,px.y));
+        vec3 crossCol = uWeapon == 0 ? vec3(.45,.75,1.0) : vec3(.9,.85,.72);
+        color = mix(color,crossCol,crosshair*.75);
         vec2 top = vec2(gl_FragCoord.x, uResolution.y-gl_FragCoord.y);
         for (int i=0;i<9;++i) {
             vec2 center=vec2(uResolution.x-34.0-float(8-i)*16.0,34.0);

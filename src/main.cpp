@@ -1,6 +1,7 @@
 #include "gl_minimal.hpp"
 #include "ui_renderer.hpp"
 #include "audio_engine.hpp"
+#include "scene_combat.hpp"
 
 #include <algorithm>
 #include <array>
@@ -90,8 +91,6 @@ struct NvidiaEnvironment {
         applied = false;
     }
 };
-
-struct Vec3 { float x{}, y{}, z{}; };
 
 Vec3 zoneStart(int zone){
     if(zone==2)return {-4.f,1.65f,8.f};
@@ -224,9 +223,11 @@ struct App {
     GLuint vao{};
     int width{kInitialWidth}, height{kInitialHeight}, drawableWidth{kInitialWidth}, drawableHeight{kInitialHeight};
     bool running{true}, mouseCaptured{}, showHud{true}, uiDirty{true}, nearSeal{}, nearPortal{}, playerMoving{};
+    bool mouseLeft{}, mouseRight{}, firePressed{};
     SaveData saved;
     UserSettings settings;
     AudioEngine audio;
+    WeaponLoadout weapons;
     Screen screen{Screen::Home}, returnScreen{Screen::Home};
     int selection{}, archiveSelection{};
     int zone{0};
@@ -246,6 +247,9 @@ struct App {
     UiCanvas ui;
     GLuint uiTexture{};
     GLint uResolution{}, uTime{}, uCamera{}, uYawPitch{}, uZone{}, uMask{}, uHud{}, uQuality{}, uUiTexture{}, uSeal{};
+    GLint uWeapon{}, uMuzzle{}, uRecoil{}, uPortalBlueOn{}, uPortalOrangeOn{};
+    GLint uPortalBluePos{}, uPortalBlueN{}, uPortalOrangePos{}, uPortalOrangeN{};
+    GLint uImpactPos{}, uImpactLife{}, uDestroyedMask{};
 
     void initialize(QualityPreference qualityPreference) {
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0)
@@ -301,6 +305,18 @@ struct App {
         uQuality = gl.GetUniformLocation(program, "uQuality");
         uUiTexture = gl.GetUniformLocation(program,"uUiTexture");
         uSeal=gl.GetUniformLocation(program,"uSealPos");
+        uWeapon=gl.GetUniformLocation(program,"uWeapon");
+        uMuzzle=gl.GetUniformLocation(program,"uMuzzle");
+        uRecoil=gl.GetUniformLocation(program,"uRecoil");
+        uPortalBlueOn=gl.GetUniformLocation(program,"uPortalBlueOn");
+        uPortalOrangeOn=gl.GetUniformLocation(program,"uPortalOrangeOn");
+        uPortalBluePos=gl.GetUniformLocation(program,"uPortalBluePos");
+        uPortalBlueN=gl.GetUniformLocation(program,"uPortalBlueN");
+        uPortalOrangePos=gl.GetUniformLocation(program,"uPortalOrangePos");
+        uPortalOrangeN=gl.GetUniformLocation(program,"uPortalOrangeN");
+        uImpactPos=gl.GetUniformLocation(program,"uImpactPos");
+        uImpactLife=gl.GetUniformLocation(program,"uImpactLife");
+        uDestroyedMask=gl.GetUniformLocation(program,"uDestroyedMask");
         gl.GenTextures(1,&uiTexture);gl.ActiveTexture(GL_TEXTURE0);gl.BindTexture(GL_TEXTURE_2D,uiTexture);
         gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
         gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
@@ -330,9 +346,135 @@ struct App {
     void setScreen(Screen next){screen=next;selection=0;setMouseCapture(next==Screen::Playing);uiDirty=true;}
     void persist(){saved={collectedMask,zone};saveProgress(saved);settings.hud=showHud;saveSettings(settings);}
 
-    void startNew(){collectedMask=0;setZone(0);persist();setScreen(Screen::Playing);}
+    void startNew(){collectedMask=0;weapons=WeaponLoadout{};setZone(0);persist();setScreen(Screen::Playing);}
     void continueGame(){setZone(saved.zone);setScreen(Screen::Playing);}
     void openFrom(Screen from,Screen target){returnScreen=from;setScreen(target);}
+
+    Vec3 aimDirection() const {
+        const float cy=std::cos(yaw),sy=std::sin(yaw),cp=std::cos(pitch),sp=std::sin(pitch);
+        return vnormalize({sy*cp,sp,-cy*cp});
+    }
+
+    void placePortal(bool blue) {
+        const RayHit hit=sceneRaycast(zone,camera,aimDirection(),weapons.destroyedMask);
+        if(!hit.hit||hit.t>42.f)return;
+        // Avoid stacking portals almost on top of each other.
+        const PortalDisk& other=blue?weapons.orange:weapons.blue;
+        if(other.active){
+            const Vec3 d=hit.pos-other.pos;
+            if(vdot(d,d)<1.2f)return;
+        }
+        PortalDisk& portal=blue?weapons.blue:weapons.orange;
+        portal.active=true;
+        portal.normal=vnormalize(hit.normal);
+        portal.pos=hit.pos+portal.normal*.04f;
+        weapons.muzzle=.55f;
+        weapons.recoil=.35f;
+        weapons.cooldown=kWeapons[0].fireInterval;
+        audio.playPortal();
+        uiDirty=true;
+    }
+
+    void fireBullet() {
+        const int wid=static_cast<int>(weapons.current);
+        if(wid==0)return;
+        if(weapons.reloading||weapons.cooldown>0.f)return;
+        if(weapons.ammoMag[wid]<=0){
+            beginReload();
+            return;
+        }
+        --weapons.ammoMag[wid];
+        const WeaponDef& def=kWeapons[wid];
+        weapons.cooldown=def.fireInterval;
+        weapons.muzzle=1.f;
+        weapons.recoil=std::min(1.f,weapons.recoil+1.f);
+        pitch=std::clamp(pitch+def.recoilPitch,-1.35f,1.35f);
+        yaw+=((weapons.ammoMag[wid]&1)?1.f:-1.f)*def.recoilYaw;
+        audio.playGunshot(wid==2);
+
+        const RayHit hit=sceneRaycast(zone,camera,aimDirection(),weapons.destroyedMask);
+        if(hit.hit){
+            weapons.impactPos=hit.pos-hit.normal*.03f;
+            weapons.impactLife=1.f;
+            if(zone==9&&hit.material==5&&tryDestroyCover(weapons.destroyedMask,hit.pos))
+                uiDirty=true;
+        }
+        uiDirty=true;
+    }
+
+    void beginReload() {
+        const int wid=static_cast<int>(weapons.current);
+        if(wid==0||weapons.reloading)return;
+        if(weapons.ammoMag[wid]>=kWeapons[wid].magSize)return;
+        if(weapons.ammoReserve[wid]<=0)return;
+        weapons.reloading=true;
+        weapons.reloadLeft=kWeapons[wid].reloadTime;
+        audio.playReload();
+        uiDirty=true;
+    }
+
+    void finishReload() {
+        const int wid=static_cast<int>(weapons.current);
+        if(wid==0){weapons.reloading=false;return;}
+        const int need=kWeapons[wid].magSize-weapons.ammoMag[wid];
+        const int take=std::min(need,weapons.ammoReserve[wid]);
+        weapons.ammoMag[wid]+=take;
+        weapons.ammoReserve[wid]-=take;
+        weapons.reloading=false;
+        weapons.reloadLeft=0.f;
+        uiDirty=true;
+    }
+
+    bool portalContains(const PortalDisk& portal,Vec3 point)const{
+        if(!portal.active)return false;
+        const Vec3 d=point-portal.pos;
+        if(std::abs(vdot(d,portal.normal))>.55f)return false;
+        Vec3 up=std::abs(portal.normal.y)>.92f?Vec3{1,0,0}:Vec3{0,1,0};
+        Vec3 right=vnormalize(vcross(up,portal.normal));
+        Vec3 uaxis=vcross(portal.normal,right);
+        const float x=vdot(d,right)/.62f,y=vdot(d,uaxis)/1.05f;
+        return x*x+y*y<=1.f;
+    }
+
+    void transferThroughPortal(const PortalDisk& from,const PortalDisk& to){
+        Vec3 up=std::abs(from.normal.y)>.92f?Vec3{1,0,0}:Vec3{0,1,0};
+        Vec3 fr=vnormalize(vcross(up,from.normal));
+        Vec3 fu=vcross(from.normal,fr);
+        up=std::abs(to.normal.y)>.92f?Vec3{1,0,0}:Vec3{0,1,0};
+        Vec3 tr=vnormalize(vcross(up,to.normal));
+        Vec3 tu=vcross(to.normal,tr);
+        tr=tr*-1.f;
+
+        auto xform=[&](Vec3 v){
+            return tr*vdot(v,fr)+tu*vdot(v,fu)+to.normal*-vdot(v,from.normal);
+        };
+
+        const Vec3 body{camera.x,feetY+eyeHeight*.5f,camera.z};
+        const Vec3 local=body-from.pos;
+        const Vec3 outBody=to.pos+xform(local)+to.normal*.85f;
+        feetY=outBody.y-eyeHeight*.5f;
+        camera.x=outBody.x;
+        camera.z=outBody.z;
+        camera.y=feetY+eyeHeight;
+        verticalVelocity=std::max(verticalVelocity,0.f);
+        grounded=false;
+
+        const float yawFrom=std::atan2(from.normal.x,-from.normal.z);
+        const float yawTo=std::atan2(-to.normal.x,to.normal.z);
+        yaw+=yawTo-yawFrom;
+        // Soft pitch flip for floor/ceiling portals.
+        if(std::abs(from.normal.y)>.7f||std::abs(to.normal.y)>.7f)
+            pitch=std::clamp(-pitch*.35f+to.normal.y*.25f,-1.35f,1.35f);
+        weapons.portalCooldown=.45f;
+        audio.playPortal();
+    }
+
+    void tryPortalTeleport(){
+        if(!weapons.blue.active||!weapons.orange.active||weapons.portalCooldown>0.f)return;
+        const Vec3 body{camera.x,feetY+eyeHeight*.45f,camera.z};
+        if(portalContains(weapons.blue,body))transferThroughPortal(weapons.blue,weapons.orange);
+        else if(portalContains(weapons.orange,body))transferThroughPortal(weapons.orange,weapons.blue);
+    }
 
     int selectionCount() const {
         switch(screen){
@@ -396,7 +538,16 @@ struct App {
         if(screen==Screen::Playing){
             if(showHud){ui.rect(24,22,3,62,red);ui.text(kZones[zone].code,40,20,12,muted,true);ui.text(kZones[zone].name,40,40,23,paper,true);
                 ui.text("乡音印记  "+std::to_string(bitCount(collectedMask))+" / 9",w-205,26,14,paper,true);
-                ui.text("WASD 移动 · SPACE 跳跃 · CTRL/C 下蹲 · SHIFT 静步 · E 互动",w*.5-272,h-38,12,{.72,.72,.67,.85});}
+                const int wid=static_cast<int>(weapons.current);
+                std::string gunLine=std::string(kWeapons[wid].name);
+                if(wid==0){
+                    gunLine+="  ·  LMB 蓝门  RMB 橙门";
+                    if(weapons.blue.active||weapons.orange.active)
+                        gunLine+="  ·  门 "+std::to_string(weapons.blue.active+weapons.orange.active)+"/2";
+                }else if(weapons.reloading)gunLine+="  ·  装填中";
+                else gunLine+="  ·  "+std::to_string(weapons.ammoMag[wid])+" / "+std::to_string(weapons.ammoReserve[wid]);
+                ui.text(gunLine,40,72,13,{.82,.78,.68,1},true);
+                ui.text("1 传送枪 · 2 USP · 3 AK  ·  滚轮切枪 ·  R 装填 ·  Q 上次武器 ·  Tab 换区",w*.5-310,h-38,12,{.72,.72,.67,.85});}
             if(nearSeal){ui.rect(w*.5-145,h*.62,290,46,{.02,.025,.02,.82});ui.outline(w*.5-145,h*.62,290,46,{.8,.35,.2,.7});ui.text("[ E ]  收录乡音印记",w*.5-92,h*.62+11,15,paper,true);}
             else if(nearPortal){ui.rect(w*.5-145,h*.62,290,46,{.02,.025,.02,.82});ui.outline(w*.5-145,h*.62,290,46,{.8,.35,.2,.7});ui.text("[ E ]  打开地域档案",w*.5-92,h*.62+11,15,paper,true);}
         }else if(screen==Screen::Home){
@@ -407,7 +558,7 @@ struct App {
             const std::array<std::string,6> items{"继续漫游","新的漫游","地域档案","设置","制作档案","退出游戏"};
             const double menuY=h<680?270:310,menuStep=h<680?45:51;
             for(int i=0;i<6;++i)drawItem(items[i],78,menuY+i*menuStep,selection==i,300);
-            ui.text("十个区域 · 九枚乡音印记 · 一个不存在的出口",68,h-72,13,muted);
+            ui.text("十个区域 · 武器与传送门 · 九枚乡音印记",68,h-72,13,muted);
             ui.text(gpuRenderer+"  /  光追"+qualityDisplay(),68,h-44,11,{.45,.55,.50,1});
         }else{
             ui.rect(0,0,w,h,{.01,.013,.011,.76});
@@ -429,7 +580,7 @@ struct App {
                     ui.text(kZones[i].code,px+50,y+3,11,active?paper:muted,true);ui.text(kZones[i].name,px+145,y+0,15,active?paper:muted,active);
                     std::string status=i==0?"总站":((collectedMask&(1u<<(i-1)))?"已收录":"未收录");auto m=ui.measure(status,11,true);ui.text(status,px+pw-52-m.first,y+5,11,active?UiColor{1,.55,.34,1}:muted,true);}
             }else if(screen==Screen::Credits){ui.text("制作档案",px+48,py+34,34,paper,true);ui.text("华夏无尽回廊",px+50,py+116,25,paper,true);
-                ui.text("C++20 · SDL2 · OpenGL 3.3",px+50,py+166,15,muted);ui.text("实时 SDF 光线追踪 / 软阴影 / 反射 / 环境光遮蔽",px+50,py+202,15,muted);
+                ui.text("C++20 · SDL2 · OpenGL 3.3",px+50,py+166,15,muted);ui.text("实时 SDF 光线追踪 / 传送门 / CS 式武器",px+50,py+202,15,muted);
                 ui.text("中国地域空间概念、程序化场景与交互设计",px+50,py+238,15,muted);drawItem("返回",px+50,h-142,true,pw-100);
             }else if(screen==Screen::Victory){ui.text("档案重合完成",px+48,py+38,34,paper,true);ui.rect(px+50,py+116,58,58,red);ui.text("印",px+66,py+124,28,paper,true);
                 ui.text("九种乡音在无尽回廊中汇成了同一个方向。",px+50,py+210,19,paper);ui.text("总站深处出现了一扇此前不存在的门。",px+50,py+250,15,muted);drawItem("返回主页",px+50,h-142,true,pw-100);
@@ -462,6 +613,9 @@ struct App {
         feetY=groundHeight(camera.x,camera.z);verticalVelocity=0;eyeHeight=1.65f;stepViewOffset=0;grounded=true;jumpRequested=false;crouching=false;
         camera.y=feetY+eyeHeight;
         yaw = pitch = 0.f;
+        weapons.blue.active=false;weapons.orange.active=false;
+        weapons.destroyedMask=0;weapons.impactLife=0;weapons.muzzle=0;weapons.recoil=0;
+        weapons.reloading=false;weapons.reloadLeft=0;weapons.cooldown=0;weapons.portalCooldown=0;
         saved.zone=zone;if(screen==Screen::Playing)saveProgress({collectedMask,zone});uiDirty=true;updateTitle(0);
     }
 
@@ -501,15 +655,15 @@ struct App {
             if(std::abs(x-6.4f)<.7f&&std::abs(z+16.2f)<.7f)result=std::max(result,1.1f);
             if(std::abs(x-2.f)<4.5f&&std::abs(z+20.f)<3.2f)result=std::max(result,.24f);
             if(std::abs(x+8.f)<4.f&&std::abs(z+15.5f)<3.5f)result=std::max(result,.24f);
-            if(std::abs(x+3.4f)<.7f&&std::abs(z-13.2f)<.55f)result=std::max(result,1.1f);
-            if(std::abs(x-3.2f)<.6f&&std::abs(z-13.4f)<.5f)result=std::max(result,1.1f);
-            if(std::abs(x+1.1f)<.55f&&std::abs(z-2.2f)<.45f)result=std::max(result,.9f);
-            if(std::abs(x-1.2f)<.5f&&std::abs(z+1.f)<.5f)result=std::max(result,.9f);
-            if(std::abs(x-10.f)<.55f&&std::abs(z+4.f)<.55f)result=std::max(result,1.f);
-            if(std::abs(x-11.2f)<.6f&&std::abs(z+10.f)<.5f)result=std::max(result,1.f);
-            if(std::abs(x-9.8f)<.55f&&std::abs(z+14.5f)<.55f)result=std::max(result,1.f);
-            if(std::abs(x+6.2f)<.7f&&std::abs(z+14.f)<.55f)result=std::max(result,1.1f);
-            if(std::abs(x+9.5f)<.65f&&std::abs(z+16.8f)<.6f)result=std::max(result,1.1f);
+            if(std::abs(x+3.4f)<.7f&&std::abs(z-13.2f)<.55f&&!(weapons.destroyedMask&1u))result=std::max(result,1.1f);
+            if(std::abs(x-3.2f)<.6f&&std::abs(z-13.4f)<.5f&&!(weapons.destroyedMask&2u))result=std::max(result,1.1f);
+            if(std::abs(x+1.1f)<.55f&&std::abs(z-2.2f)<.45f&&!(weapons.destroyedMask&4u))result=std::max(result,.9f);
+            if(std::abs(x-1.2f)<.5f&&std::abs(z+1.f)<.5f&&!(weapons.destroyedMask&8u))result=std::max(result,.9f);
+            if(std::abs(x-10.f)<.55f&&std::abs(z+4.f)<.55f&&!(weapons.destroyedMask&16u))result=std::max(result,1.f);
+            if(std::abs(x-11.2f)<.6f&&std::abs(z+10.f)<.5f&&!(weapons.destroyedMask&32u))result=std::max(result,1.f);
+            if(std::abs(x-9.8f)<.55f&&std::abs(z+14.5f)<.55f&&!(weapons.destroyedMask&64u))result=std::max(result,1.f);
+            if(std::abs(x+6.2f)<.7f&&std::abs(z+14.f)<.55f&&!(weapons.destroyedMask&1024u))result=std::max(result,1.1f);
+            if(std::abs(x+9.5f)<.65f&&std::abs(z+16.8f)<.6f&&!(weapons.destroyedMask&2048u))result=std::max(result,1.1f);
         }
         return result;
     }
@@ -539,7 +693,8 @@ struct App {
             if(insideBox(x,z,14.f,-21.f,2.5f,2.f)||insideBox(x,z,12.2f,-18.8f,.2f,1.2f))return true;
             // Cars / tall cover treated as solid at foot level
             if(insideBox(x,z,-3.5f,-20.5f,1.6f,.7f,.2f)||insideBox(x,z,-10.5f,-14.2f,1.4f,.65f,.2f))return true;
-            if(insideBox(x,z,-1.2f,-18.5f,.7f,.55f)||insideBox(x,z,4.8f,-21.5f,.65f,.55f))return true;
+            if(!(weapons.destroyedMask&128u)&&insideBox(x,z,-1.2f,-18.5f,.7f,.55f))return true;
+            if(!(weapons.destroyedMask&256u)&&insideBox(x,z,4.8f,-21.5f,.65f,.55f))return true;
             return false;
         }
         if(std::abs(x)>10.7f||z<-25.f||z>10.5f)return true;
@@ -579,16 +734,35 @@ struct App {
                 width = std::max(event.window.data1, 1);
                 height = std::max(event.window.data2, 1);
                 SDL_GL_GetDrawableSize(window,&drawableWidth,&drawableHeight);uiDirty=true;
-            }else if(event.type==SDL_MOUSEBUTTONDOWN&&event.button.button==SDL_BUTTON_LEFT&&screen!=Screen::Playing){
-                activateSelection();
+            }else if(event.type==SDL_MOUSEBUTTONDOWN){
+                if(event.button.button==SDL_BUTTON_LEFT){
+                    mouseLeft=true;
+                    if(screen==Screen::Playing)firePressed=true;
+                    else activateSelection();
+                }else if(event.button.button==SDL_BUTTON_RIGHT&&screen==Screen::Playing){
+                    mouseRight=true;firePressed=true;
+                }
+            }else if(event.type==SDL_MOUSEBUTTONUP){
+                if(event.button.button==SDL_BUTTON_LEFT)mouseLeft=false;
+                else if(event.button.button==SDL_BUTTON_RIGHT)mouseRight=false;
+            }else if(event.type==SDL_MOUSEWHEEL&&screen==Screen::Playing){
+                weapons.cycle(event.wheel.y>0?-1:1);uiDirty=true;
             } else if (event.type == SDL_KEYDOWN && !event.key.repeat) {
                 const int sc = event.key.keysym.scancode;
                 if(sc==SC_ESCAPE){if(screen==Screen::Home){returnScreen=Screen::Home;setScreen(Screen::ConfirmQuit);}else navigateBack();}
                 else if(screen==Screen::Playing){
-                    if(sc==SC_TAB)setZone(zone+1);else if(sc==SC_Q)setZone(zone-1);else if(sc==SC_E)interact();
+                    if(sc==SC_TAB){
+                        int count=0;const Uint8* key=SDL_GetKeyboardState(&count);
+                        const bool shift=SC_LSHIFT<count&&key[SC_LSHIFT];
+                        setZone(zone+(shift?-1:1));
+                    }else if(sc==SC_Q){weapons.selectPrevious();uiDirty=true;}
+                    else if(sc==SC_E)interact();
+                    else if(sc==SC_R)beginReload();
                     else if(sc==SC_SPACE)jumpRequested=true;
                     else if(sc==SC_M){showHud=!showHud;settings.hud=showHud;saveSettings(settings);uiDirty=true;}
-                    else if(sc==SC_0)setZone(0);else if(sc>=SC_1&&sc<=SC_9)setZone(sc-SC_1+1);
+                    else if(sc==SC_1){weapons.select(WeaponId::PortalGun);uiDirty=true;}
+                    else if(sc==SC_2){weapons.select(WeaponId::Usp);uiDirty=true;}
+                    else if(sc==SC_3){weapons.select(WeaponId::Ak47);uiDirty=true;}
                 }else if(sc==SC_UP||sc==SC_W)moveSelection(-1);
                 else if(sc==SC_DOWN||sc==SC_S)moveSelection(1);
                 else if((sc==SC_LEFT||sc==SC_A)&&screen==Screen::Settings)adjustSetting(-1);
@@ -599,7 +773,28 @@ struct App {
     }
 
     void update(float dt) {
-        if(screen!=Screen::Playing){playerMoving=false;audio.update(zone,false);return;}
+        if(screen!=Screen::Playing){playerMoving=false;mouseLeft=mouseRight=false;audio.update(zone,false);return;}
+        weapons.cooldown=std::max(0.f,weapons.cooldown-dt);
+        weapons.portalCooldown=std::max(0.f,weapons.portalCooldown-dt);
+        weapons.muzzle=std::max(0.f,weapons.muzzle-dt*4.5f);
+        weapons.recoil=std::max(0.f,weapons.recoil-dt*3.2f);
+        weapons.impactLife=std::max(0.f,weapons.impactLife-dt*1.8f);
+        if(weapons.reloading){
+            weapons.reloadLeft-=dt;
+            if(weapons.reloadLeft<=0.f)finishReload();
+        }
+
+        // Weapon fire: portal gun is click-to-place; USP is semi-auto; AK is full-auto.
+        if(firePressed||(weapons.current==WeaponId::Ak47&&mouseLeft)){
+            if(weapons.current==WeaponId::PortalGun){
+                if(firePressed){
+                    if(mouseLeft)placePortal(true);
+                    else if(mouseRight)placePortal(false);
+                }
+            }else if(mouseLeft)fireBullet();
+            firePressed=false;
+        }
+
         int count = 0;
         const Uint8* key = SDL_GetKeyboardState(&count);
         auto down = [&](int sc) { return sc >= 0 && sc < count && key[sc] != 0; };
@@ -628,9 +823,11 @@ struct App {
         const float dx=(sy*forward+cy*strafe)*speed*dt,dz=(-cy*forward+sy*strafe)*speed*dt;
         constexpr float maxStepUp=.46f;
         auto tryMove=[&](float nextX,float nextZ){
-            if(blocked(nextX,nextZ))return;
+            const bool portalGate=portalContains(weapons.blue,{nextX,feetY+eyeHeight*.5f,nextZ})
+                               ||portalContains(weapons.orange,{nextX,feetY+eyeHeight*.5f,nextZ});
+            if(blocked(nextX,nextZ)&&!portalGate)return;
             const float nextGround=groundHeight(nextX,nextZ);
-            if(grounded&&nextGround-feetY>maxStepUp)return;
+            if(grounded&&nextGround-feetY>maxStepUp&&!portalGate)return;
             camera.x=nextX;camera.z=nextZ;
             if(grounded&&nextGround>feetY){
                 const float rise=nextGround-feetY;
@@ -659,6 +856,8 @@ struct App {
             }
         }
 
+        tryPortalTeleport();
+
         playerMoving=std::hypot(camera.x-oldX,camera.z-oldZ)>.0001f;
         stepViewOffset*=std::exp(-12.f*dt);
         const float bobAmount=crouching?.010f:(quietWalking?.014f:.025f);
@@ -686,6 +885,18 @@ struct App {
         const Vec3 seal=zoneSeal(zone);gl.Uniform2f(uSeal,seal.x,seal.z);
         gl.Uniform1i(uHud, showHud ? 1 : 0);
         gl.Uniform1i(uQuality, quality);
+        gl.Uniform1i(uWeapon, static_cast<int>(weapons.current));
+        gl.Uniform1f(uMuzzle, weapons.muzzle);
+        gl.Uniform1f(uRecoil, weapons.recoil);
+        gl.Uniform1i(uPortalBlueOn, weapons.blue.active ? 1 : 0);
+        gl.Uniform1i(uPortalOrangeOn, weapons.orange.active ? 1 : 0);
+        gl.Uniform3f(uPortalBluePos, weapons.blue.pos.x, weapons.blue.pos.y, weapons.blue.pos.z);
+        gl.Uniform3f(uPortalBlueN, weapons.blue.normal.x, weapons.blue.normal.y, weapons.blue.normal.z);
+        gl.Uniform3f(uPortalOrangePos, weapons.orange.pos.x, weapons.orange.pos.y, weapons.orange.pos.z);
+        gl.Uniform3f(uPortalOrangeN, weapons.orange.normal.x, weapons.orange.normal.y, weapons.orange.normal.z);
+        gl.Uniform3f(uImpactPos, weapons.impactPos.x, weapons.impactPos.y, weapons.impactPos.z);
+        gl.Uniform1f(uImpactLife, weapons.impactLife);
+        gl.Uniform1i(uDestroyedMask, static_cast<int>(weapons.destroyedMask));
         gl.ActiveTexture(GL_TEXTURE0);gl.BindTexture(GL_TEXTURE_2D,uiTexture);gl.Uniform1i(uUiTexture,0);
         gl.DrawArrays(GL_TRIANGLES, 0, 3);
         SDL_GL_SwapWindow(window);

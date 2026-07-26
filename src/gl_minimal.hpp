@@ -72,6 +72,7 @@ struct GLApi {
     void (*Uniform1i)(GLint,GLint){};
     void (*Uniform2f)(GLint,GLfloat,GLfloat){};
     void (*Uniform3f)(GLint,GLfloat,GLfloat,GLfloat){};
+    void (*Uniform4f)(GLint,GLfloat,GLfloat,GLfloat,GLfloat){};
     void (*DrawArrays)(GLenum,GLint,GLsizei){};
 
     template<typename T> static T load(const char* name) {
@@ -90,7 +91,7 @@ struct GLApi {
         LOAD(DeleteShader); LOAD(CreateProgram); LOAD(AttachShader); LOAD(LinkProgram);
         LOAD(GetProgramiv); LOAD(GetProgramInfoLog); LOAD(DeleteProgram); LOAD(UseProgram);
         LOAD(GetUniformLocation); LOAD(Uniform1f); LOAD(Uniform1i); LOAD(Uniform2f);
-        LOAD(Uniform3f); LOAD(DrawArrays);
+        LOAD(Uniform3f); LOAD(Uniform4f); LOAD(DrawArrays);
 #undef LOAD
     }
 };

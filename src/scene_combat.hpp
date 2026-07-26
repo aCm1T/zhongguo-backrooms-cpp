@@ -1,0 +1,253 @@
+#pragma once
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+
+struct Vec3 {
+    float x{}, y{}, z{};
+    Vec3 operator+(Vec3 o) const { return {x + o.x, y + o.y, z + o.z}; }
+    Vec3 operator-(Vec3 o) const { return {x - o.x, y - o.y, z - o.z}; }
+    Vec3 operator*(float s) const { return {x * s, y * s, z * s}; }
+    Vec3 operator-() const { return {-x, -y, -z}; }
+};
+
+inline float vdot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+inline float vlength(Vec3 v) { return std::sqrt(vdot(v, v)); }
+inline Vec3 vnormalize(Vec3 v) {
+    const float len = vlength(v);
+    return len > 1e-6f ? v * (1.f / len) : Vec3{0, 1, 0};
+}
+inline Vec3 vcross(Vec3 a, Vec3 b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+inline float vmin3(float a, float b, float c) { return std::min(a, std::min(b, c)); }
+inline float vmax3(float a, float b, float c) { return std::max(a, std::max(b, c)); }
+
+inline float sdBox(Vec3 p, Vec3 b) {
+    const float qx = std::abs(p.x) - b.x, qy = std::abs(p.y) - b.y, qz = std::abs(p.z) - b.z;
+    const float outside = vlength({std::max(qx, 0.f), std::max(qy, 0.f), std::max(qz, 0.f)});
+    const float inside = std::min(vmax3(qx, qy, qz), 0.f);
+    return outside + inside;
+}
+
+inline float sdRoundBox(Vec3 p, Vec3 b, float r) {
+    return sdBox(p, {b.x - r, b.y - r, b.z - r}) - r;
+}
+
+struct RayHit {
+    bool hit{};
+    Vec3 pos{};
+    Vec3 normal{};
+    float t{1e9f};
+    int material{-1};
+};
+
+// CPU mirror of the raytraced world used for portal placement and hitscan.
+inline float sceneDistance(int zone, Vec3 p, std::uint32_t destroyedMask, int* materialOut = nullptr) {
+    float best = p.y;
+    int material = 1;
+    auto take = [&](float d, int mat) {
+        if (d < best) {
+            best = d;
+            material = mat;
+        }
+    };
+
+    if (zone == 9) {
+        take(sdBox(p - Vec3{0.f, 4.f, 24.5f}, {22.f, 5.f, .6f}), 19);
+        take(sdBox(p - Vec3{0.f, 4.f, -26.5f}, {22.f, 5.f, .6f}), 19);
+        take(sdBox(p - Vec3{-18.5f, 4.f, -1.f}, {.6f, 5.f, 26.f}), 19);
+        take(sdBox(p - Vec3{18.5f, 4.f, -1.f}, {.6f, 5.f, 26.f}), 19);
+
+        take(sdBox(p - Vec3{-5.2f, 1.4f, 16.f}, {.25f, 1.4f, 3.2f}), 19);
+        take(sdBox(p - Vec3{5.2f, 1.4f, 16.f}, {.25f, 1.4f, 3.2f}), 19);
+        take(sdBox(p - Vec3{0.f, 1.4f, 19.4f}, {5.4f, 1.4f, .25f}), 19);
+        if ((destroyedMask & 1u) == 0) take(sdBox(p - Vec3{-3.4f, .55f, 13.2f}, {.7f, .55f, .55f}), 5);
+        if ((destroyedMask & 2u) == 0) take(sdBox(p - Vec3{3.2f, .55f, 13.4f}, {.6f, .55f, .5f}), 5);
+
+        take(sdBox(p - Vec3{-3.6f, 2.f, 6.5f}, {.35f, 2.f, 3.f}), 19);
+        take(sdBox(p - Vec3{3.6f, 2.f, 6.5f}, {.35f, 2.f, 3.f}), 19);
+        take(sdBox(p - Vec3{-3.6f, 2.f, 1.2f}, {.35f, 2.f, 1.4f}), 19);
+        take(sdBox(p - Vec3{3.6f, 2.f, 1.2f}, {.35f, 2.f, 1.4f}), 19);
+        take(sdBox(p - Vec3{-3.6f, 2.f, -3.6f}, {.35f, 2.f, 1.2f}), 19);
+        take(sdBox(p - Vec3{3.6f, 2.f, -3.6f}, {.35f, 2.f, 1.2f}), 19);
+        take(sdBox(p - Vec3{-1.55f, 1.8f, .6f}, {.18f, 1.8f, .12f}), 17);
+        take(sdBox(p - Vec3{1.55f, 1.8f, .6f}, {.18f, 1.8f, .12f}), 17);
+        take(sdBox(p - Vec3{0.f, 3.55f, .6f}, {1.75f, .18f, .12f}), 17);
+        if ((destroyedMask & 4u) == 0) take(sdBox(p - Vec3{-1.1f, .45f, 2.2f}, {.55f, .45f, .45f}), 5);
+        if ((destroyedMask & 8u) == 0) take(sdBox(p - Vec3{1.2f, .45f, -1.f}, {.5f, .45f, .5f}), 5);
+
+        for (int i = 0; i < 5; ++i) {
+            const float fi = static_cast<float>(i);
+            const float h = .18f + fi * .28f;
+            take(sdBox(p - Vec3{1.2f, h, -5.f - fi * .55f}, {2.4f, h, .32f}), 5);
+        }
+        take(sdBox(p - Vec3{4.8f, 1.55f, -8.2f}, {1.1f, .18f, 2.2f}), 5);
+
+        take(sdBox(p - Vec3{8.2f, 2.2f, -2.f}, {.35f, 2.2f, 8.5f}), 19);
+        take(sdBox(p - Vec3{13.6f, 2.2f, -6.f}, {.35f, 2.2f, 12.f}), 19);
+        take(sdBox(p - Vec3{10.9f, 2.2f, 6.2f}, {2.9f, 2.2f, .35f}), 19);
+        take(sdBox(p - Vec3{10.9f, 2.2f, -18.2f}, {2.9f, 2.2f, .35f}), 19);
+        if ((destroyedMask & 16u) == 0) take(sdBox(p - Vec3{10.f, .5f, -4.f}, {.55f, .5f, .55f}), 5);
+        if ((destroyedMask & 32u) == 0) take(sdBox(p - Vec3{11.2f, .5f, -10.f}, {.6f, .5f, .5f}), 5);
+        if ((destroyedMask & 64u) == 0) take(sdBox(p - Vec3{9.8f, .5f, -14.5f}, {.55f, .5f, .55f}), 5);
+
+        take(sdBox(p - Vec3{5.5f, .65f, -12.f}, {.9f, .65f, .9f}), 5);
+        take(sdBox(p - Vec3{5.5f, 1.55f, -12.f}, {.55f, .35f, .55f}), 5);
+        take(sdBox(p - Vec3{7.2f, 1.15f, -14.5f}, {1.f, .18f, 1.6f}), 5);
+        take(sdBox(p - Vec3{6.4f, .55f, -16.2f}, {.7f, .55f, .7f}), 5);
+
+        take(sdBox(p - Vec3{2.f, .12f, -20.f}, {4.5f, .12f, 3.2f}), 5);
+        if ((destroyedMask & 128u) == 0) take(sdBox(p - Vec3{-1.2f, .7f, -18.5f}, {.7f, .7f, .55f}), 5);
+        if ((destroyedMask & 256u) == 0) take(sdBox(p - Vec3{4.8f, .7f, -21.5f}, {.65f, .7f, .55f}), 5);
+        take(sdBox(p - Vec3{0.f, 1.6f, -23.5f}, {5.5f, 1.6f, .3f}), 19);
+        take(sdRoundBox(p - Vec3{-3.5f, .85f, -20.5f}, {1.6f, .55f, .7f}, .08f), 13);
+
+        take(sdBox(p - Vec3{-7.5f, 2.f, 8.f}, {.35f, 2.f, 3.f}), 19);
+        take(sdBox(p - Vec3{-7.5f, 2.f, 1.5f}, {.35f, 2.f, 2.f}), 19);
+        take(sdBox(p - Vec3{-12.5f, 2.f, 2.f}, {.35f, 2.f, 9.f}), 19);
+        take(sdBox(p - Vec3{-10.f, 2.f, 10.8f}, {2.8f, 2.f, .35f}), 19);
+        take(sdBox(p - Vec3{-10.f, 3.55f, 2.f}, {2.8f, .2f, 9.f}), 19);
+        take(sdBox(p - Vec3{-11.6f, 2.f, -7.2f}, {1.2f, 2.f, .35f}), 19);
+        take(sdBox(p - Vec3{-8.4f, 2.f, -7.2f}, {1.2f, 2.f, .35f}), 19);
+        if ((destroyedMask & 512u) == 0) take(sdBox(p - Vec3{-8.5f, .5f, 4.f}, {.5f, .5f, .5f}), 5);
+
+        take(sdBox(p - Vec3{-8.f, .12f, -15.5f}, {4.f, .12f, 3.5f}), 5);
+        take(sdBox(p - Vec3{-11.5f, 1.4f, -12.f}, {.3f, 1.4f, 3.f}), 19);
+        take(sdBox(p - Vec3{-4.5f, 1.4f, -15.5f}, {.3f, 1.4f, 3.5f}), 19);
+        take(sdBox(p - Vec3{-8.f, 1.4f, -19.2f}, {4.f, 1.4f, .3f}), 19);
+        if ((destroyedMask & 1024u) == 0) take(sdBox(p - Vec3{-6.2f, .55f, -14.f}, {.7f, .55f, .55f}), 5);
+        if ((destroyedMask & 2048u) == 0) take(sdBox(p - Vec3{-9.5f, .55f, -16.8f}, {.65f, .55f, .6f}), 5);
+        take(sdRoundBox(p - Vec3{-10.5f, .8f, -14.2f}, {1.4f, .5f, .65f}, .07f), 13);
+
+        take(sdBox(p - Vec3{14.f, 2.f, -21.f}, {2.5f, 2.f, 2.f}), 19);
+        take(sdBox(p - Vec3{12.2f, 1.1f, -18.8f}, {.2f, 1.1f, 1.2f}), 19);
+    } else {
+        take(5.35f - p.y, 2);
+        take(11.8f - std::abs(p.x), 3);
+        take(25.f + p.z, 3);
+        take(11.f - p.z, 3);
+        if (zone == 0) {
+            take(sdBox(p - Vec3{-1.55f, 2.2f, -15.f}, {.16f, 2.2f, .2f}), 10);
+            take(sdBox(p - Vec3{1.55f, 2.2f, -15.f}, {.16f, 2.2f, .2f}), 10);
+            take(sdBox(p - Vec3{0.f, 4.4f, -15.f}, {1.7f, .16f, .2f}), 10);
+        } else if (zone == 4) {
+            take(sdBox(p - Vec3{0.f, .55f, 0.f}, {1.1f, .55f, 1.1f}), 14);
+        } else if (zone == 7) {
+            take(sdBox(p - Vec3{-6.f, .45f, 0.f}, {1.8f, .45f, .48f}), 14);
+            take(sdBox(p - Vec3{6.f, .45f, 0.f}, {1.8f, .45f, .48f}), 14);
+        }
+    }
+
+    if (materialOut) *materialOut = material;
+    return best;
+}
+
+inline Vec3 sceneNormal(int zone, Vec3 p, std::uint32_t destroyedMask) {
+    constexpr float e = .004f;
+    const float d = sceneDistance(zone, p, destroyedMask);
+    return vnormalize({
+        sceneDistance(zone, p + Vec3{e, 0, 0}, destroyedMask) - d,
+        sceneDistance(zone, p + Vec3{0, e, 0}, destroyedMask) - d,
+        sceneDistance(zone, p + Vec3{0, 0, e}, destroyedMask) - d});
+}
+
+inline RayHit sceneRaycast(int zone, Vec3 ro, Vec3 rd, std::uint32_t destroyedMask, float maxDist = 48.f) {
+    RayHit result;
+    float t = .05f;
+    rd = vnormalize(rd);
+    for (int i = 0; i < 140; ++i) {
+        const Vec3 p = ro + rd * t;
+        int material = -1;
+        const float d = sceneDistance(zone, p, destroyedMask, &material);
+        if (d < .012f) {
+            result.hit = true;
+            result.t = t;
+            result.pos = p;
+            result.normal = sceneNormal(zone, p, destroyedMask);
+            if (vdot(result.normal, rd) > 0.f) result.normal = -result.normal;
+            result.material = material;
+            return result;
+        }
+        t += std::max(d * .82f, .018f);
+        if (t > maxDist) break;
+    }
+    return result;
+}
+
+// Shootable Dust II crate centers matched to destroyedMask bits.
+inline bool tryDestroyCover(std::uint32_t& destroyedMask, Vec3 hitPos) {
+    static constexpr Vec3 kCovers[] = {
+        {-3.4f, .55f, 13.2f}, {3.2f, .55f, 13.4f}, {-1.1f, .45f, 2.2f}, {1.2f, .45f, -1.f},
+        {10.f, .5f, -4.f}, {11.2f, .5f, -10.f}, {9.8f, .5f, -14.5f}, {-1.2f, .7f, -18.5f},
+        {4.8f, .7f, -21.5f}, {-8.5f, .5f, 4.f}, {-6.2f, .55f, -14.f}, {-9.5f, .55f, -16.8f}};
+    for (int i = 0; i < 12; ++i) {
+        const Vec3 d = hitPos - kCovers[i];
+        if (vdot(d, d) < 1.35f) {
+            const std::uint32_t bit = 1u << i;
+            if (destroyedMask & bit) return false;
+            destroyedMask |= bit;
+            return true;
+        }
+    }
+    return false;
+}
+
+enum class WeaponId { PortalGun = 0, Usp = 1, Ak47 = 2 };
+
+struct WeaponDef {
+    const char* name;
+    int magSize;
+    int reserve;
+    float fireInterval;
+    float reloadTime;
+    bool automatic;
+    float damageHint;
+    float recoilPitch;
+    float recoilYaw;
+};
+
+inline constexpr WeaponDef kWeapons[] = {
+    {"传送枪", 0, 0, .18f, 0.f, false, 0.f, .008f, .004f},
+    {"USP", 12, 36, .22f, 1.6f, false, 1.f, .028f, .012f},
+    {"AK-47", 30, 90, .1f, 2.3f, true, 2.f, .042f, .02f},
+};
+
+struct PortalDisk {
+    bool active{};
+    Vec3 pos{};
+    Vec3 normal{0, 0, 1};
+};
+
+struct WeaponLoadout {
+    WeaponId current{WeaponId::PortalGun};
+    WeaponId previous{WeaponId::Usp};
+    int ammoMag[3]{0, 12, 30};
+    int ammoReserve[3]{0, 36, 90};
+    float cooldown{};
+    float reloadLeft{};
+    float muzzle{};
+    float recoil{};
+    bool reloading{};
+    PortalDisk blue{};
+    PortalDisk orange{};
+    float portalCooldown{};
+    Vec3 impactPos{};
+    float impactLife{};
+    std::uint32_t destroyedMask{};
+
+    void select(WeaponId id) {
+        if (id == current) return;
+        previous = current;
+        current = id;
+        reloading = false;
+        reloadLeft = 0.f;
+        cooldown = .12f;
+    }
+    void selectPrevious() { select(previous); }
+    void cycle(int delta) {
+        int idx = (static_cast<int>(current) + delta + 3) % 3;
+        select(static_cast<WeaponId>(idx));
+    }
+};

@@ -48,11 +48,18 @@ struct SDL_MouseButtonEvent {
     Sint32 x, y;
 };
 
+struct SDL_MouseWheelEvent {
+    Uint32 type, timestamp, windowID, which;
+    Sint32 x, y;
+    Uint32 direction;
+};
+
 union SDL_Event {
     Uint32 type;
     SDL_KeyboardEvent key;
     SDL_MouseMotionEvent motion;
     SDL_MouseButtonEvent button;
+    SDL_MouseWheelEvent wheel;
     SDL_WindowEvent window;
     std::uint8_t padding[56];
 };
@@ -102,9 +109,12 @@ constexpr Uint32 SDL_KEYDOWN = 0x300u;
 constexpr Uint32 SDL_KEYUP = 0x301u;
 constexpr Uint32 SDL_MOUSEMOTION = 0x400u;
 constexpr Uint32 SDL_MOUSEBUTTONDOWN = 0x401u;
+constexpr Uint32 SDL_MOUSEBUTTONUP = 0x402u;
+constexpr Uint32 SDL_MOUSEWHEEL = 0x403u;
 constexpr Uint8 SDL_WINDOWEVENT_RESIZED = 0x05u;
 constexpr Uint8 SDL_WINDOWEVENT_SIZE_CHANGED = 0x06u;
 constexpr Uint8 SDL_BUTTON_LEFT = 1;
+constexpr Uint8 SDL_BUTTON_RIGHT = 3;
 constexpr Uint32 SDL_WINDOW_FULLSCREEN_DESKTOP = 0x00001001u;
 
 constexpr int SDL_GL_CONTEXT_MAJOR_VERSION = 17;
