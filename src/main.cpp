@@ -261,7 +261,9 @@ struct App {
     GLint uFovScale{}, uLaserSegs{}, uLaserPowered{};
     GLint uLaserA0{}, uLaserB0{}, uLaserA1{}, uLaserB1{}, uLaserA2{}, uLaserB2{};
     GLint uEmitterPos{}, uCatcherPos{}, uAmmoFrac{};
-    GLint uTracerA{}, uTracerB{}, uTracerLife{};
+    GLint uTracerA0{}, uTracerB0{}, uTracerLife0{};
+    GLint uTracerA1{}, uTracerB1{}, uTracerLife1{};
+    GLint uTracerA2{}, uTracerB2{}, uTracerLife2{};
     GLint uUiOverlayTex{};
     bool previewOn{}, previewOk{}, previewBlue{true};
     Vec3 previewPos{}, previewN{0.f, 0.f, 1.f};
@@ -371,9 +373,15 @@ struct App {
         uEmitterPos=gl.GetUniformLocation(program,"uEmitterPos");
         uCatcherPos=gl.GetUniformLocation(program,"uCatcherPos");
         uAmmoFrac=gl.GetUniformLocation(program,"uAmmoFrac");
-        uTracerA=gl.GetUniformLocation(program,"uTracerA");
-        uTracerB=gl.GetUniformLocation(program,"uTracerB");
-        uTracerLife=gl.GetUniformLocation(program,"uTracerLife");
+        uTracerA0=gl.GetUniformLocation(program,"uTracerA0");
+        uTracerB0=gl.GetUniformLocation(program,"uTracerB0");
+        uTracerLife0=gl.GetUniformLocation(program,"uTracerLife0");
+        uTracerA1=gl.GetUniformLocation(program,"uTracerA1");
+        uTracerB1=gl.GetUniformLocation(program,"uTracerB1");
+        uTracerLife1=gl.GetUniformLocation(program,"uTracerLife1");
+        uTracerA2=gl.GetUniformLocation(program,"uTracerA2");
+        uTracerB2=gl.GetUniformLocation(program,"uTracerB2");
+        uTracerLife2=gl.GetUniformLocation(program,"uTracerLife2");
         gl.UseProgram(uiProgram);
         uUiOverlayTex=gl.GetUniformLocation(uiProgram,"uUiTexture");
         gl.Uniform1i(uUiOverlayTex,0);
@@ -451,7 +459,7 @@ struct App {
 
     void placePortal(bool blue) {
         const RayHit hit=sceneRaycast(zone,camera,aimDirection(false),weapons.destroyedMask,weapons.targetMask,48.f,&puzzle);
-        auto deny=[&](){weapons.denyFlash=1.f;weapons.cooldown=.12f;};
+        auto deny=[&](){weapons.denyFlash=1.f;weapons.cooldown=.12f;audio.playDeny();};
         if(!hit.hit||hit.t>42.f){deny();return;}
         if(hit.material==27||hit.material==28||hit.material==29||hit.material==30||hit.material==31||hit.material==33
            ||hit.material==37||hit.material==38||hit.material==39||hit.material==40||hit.material==41||hit.material==42){deny();return;}
@@ -485,6 +493,7 @@ struct App {
         if(wid==0)return;
         if(weapons.reloading||weapons.cooldown>0.f)return;
         if(weapons.ammoMag[wid]<=0){
+            if(weapons.ammoReserve[wid]<=0) audio.playDryFire();
             beginReload();
             return;
         }
@@ -503,8 +512,10 @@ struct App {
         if(hit.hit){
             weapons.pushImpact(hit.pos-hit.normal*.03f);
             weapons.pushTracer(muzzle,hit.pos);
-            if(zone==9&&hit.material==5&&tryDestroyCover(weapons.destroyedMask,hit.pos))
+            if(zone==9&&hit.material==5&&tryDestroyCover(weapons.destroyedMask,hit.pos)){
+                audio.playBreak();
                 uiDirty=true;
+            }
             if(zone==9&&hit.material==27&&tryHitTarget(weapons.targetMask,hit.pos)){
                 weapons.hitMarker=1.f;
                 ++weapons.targetsDown;
@@ -529,12 +540,13 @@ struct App {
         const int wid=static_cast<int>(weapons.current);
         if(wid==0){
             weapons.clearPortals();
+            audio.playDeny();
             uiDirty=true;
             return;
         }
         if(weapons.reloading)return;
         if(weapons.ammoMag[wid]>=kWeapons[wid].magSize)return;
-        if(weapons.ammoReserve[wid]<=0)return;
+        if(weapons.ammoReserve[wid]<=0){audio.playDryFire();return;}
         weapons.reloading=true;
         weapons.reloadLeft=kWeapons[wid].reloadTime;
         audio.playReload();
@@ -679,7 +691,7 @@ struct App {
                     gunLine+="  ·  LMB 蓝门  RMB 橙门  ·  R 清除传送门";
                     if(weapons.blue.active||weapons.orange.active)
                         gunLine+="  ·  "+std::to_string(static_cast<int>(weapons.blue.active)+static_cast<int>(weapons.orange.active))+"/2";
-                }else if(weapons.reloading)gunLine+="  ·  装填中";
+                }else if(weapons.reloading)gunLine+="  ·  装填中  "+std::to_string(weapons.ammoMag[wid])+" / "+std::to_string(weapons.ammoReserve[wid]);
                 else gunLine+="  ·  "+std::to_string(weapons.ammoMag[wid])+" / "+std::to_string(weapons.ammoReserve[wid]);
                 if(zone==9)gunLine+="  ·  靶 "+std::to_string(weapons.targetsDown)+"/"+std::to_string(kPracticeTargetCount);
                 ui.text(gunLine,40,72,13,{.82,.78,.68,1},true);
@@ -806,6 +818,7 @@ struct App {
         puzzle.cubeHeld=true;
         puzzle.cubeVel={};
         puzzle.cubeGrounded=false;
+        audio.playCube();
         uiDirty=true;
     }
 
@@ -820,6 +833,7 @@ struct App {
         }else{
             puzzle.cubeVel={};
         }
+        audio.playCube();
         uiDirty=true;
     }
 
@@ -870,6 +884,14 @@ struct App {
                 puzzle.cubeVel.z*=std::exp(-4.f*dt);
                 puzzle.cubeGrounded=true;
             }else puzzle.cubeGrounded=false;
+            // Rescue cube from Long A pit when the laser bridge is down.
+            if(puzzle.cubePos.y<-.15f&&!puzzle.laserPowered&&
+               std::abs(puzzle.cubePos.x-10.9f)<2.6f&&std::abs(puzzle.cubePos.z+11.5f)<1.9f){
+                puzzle.cubePos={8.2f,.55f,-11.5f};
+                puzzle.cubeVel={};
+                puzzle.cubeGrounded=true;
+                uiDirty=true;
+            }
             tryTeleportCube();
         }
 
@@ -1068,8 +1090,12 @@ struct App {
             if(std::abs(x-10.f)<.55f&&std::abs(z+4.f)<.55f&&!(weapons.destroyedMask&16u))result=std::max(result,1.f);
             if(std::abs(x-11.2f)<.6f&&std::abs(z+10.f)<.5f&&!(weapons.destroyedMask&32u))result=std::max(result,1.f);
             if(std::abs(x-9.8f)<.55f&&std::abs(z+14.5f)<.55f&&!(weapons.destroyedMask&64u))result=std::max(result,1.f);
+            if(std::abs(x+8.5f)<.5f&&std::abs(z-4.f)<.5f&&!(weapons.destroyedMask&512u))result=std::max(result,1.f);
             if(std::abs(x+6.2f)<.7f&&std::abs(z+14.f)<.55f&&!(weapons.destroyedMask&1024u))result=std::max(result,1.1f);
             if(std::abs(x+9.5f)<.65f&&std::abs(z+16.8f)<.6f&&!(weapons.destroyedMask&2048u))result=std::max(result,1.1f);
+            if(std::abs(x+.2f)<.85f&&std::abs(z+17.8f)<.55f)result=std::max(result,1.1f); // goose
+            if(std::abs(x+2.2f)<.4f&&std::abs(z-3.8f)<.4f)result=std::max(result,.9f); // mid barrels
+            if(std::abs(x-11.6f)<1.35f&&std::abs(z+19.4f)<.62f)result=std::max(result,.97f); // CT car
         }
         return result;
     }
@@ -1084,6 +1110,8 @@ struct App {
             if(insideBox(x,z,-3.6f,1.2f,.35f,1.4f)||insideBox(x,z,3.6f,1.2f,.35f,1.4f))return true;
             if(insideBox(x,z,-3.6f,-3.6f,.35f,1.2f)||insideBox(x,z,3.6f,-3.6f,.35f,1.2f))return true;
             if(insideBox(x,z,-1.55f,.6f,.18f,.12f)||insideBox(x,z,1.55f,.6f,.18f,.12f))return true;
+            // Mid double doors — leave a walkable gap down the center.
+            if(insideBox(x,z,-.92f,.55f,.52f,.12f,.15f)||insideBox(x,z,.98f,.62f,.52f,.12f,.15f))return true;
             // Long A
             if(insideBox(x,z,8.2f,-2.f,.35f,8.5f)||insideBox(x,z,13.6f,-6.f,.35f,12.f))return true;
             if(insideBox(x,z,10.9f,6.2f,2.9f,.35f)||insideBox(x,z,10.9f,-18.2f,2.9f,.35f))return true;
@@ -1101,6 +1129,8 @@ struct App {
             if(insideBox(x,z,-3.5f,-20.5f,1.6f,.7f,.2f)||insideBox(x,z,-10.5f,-14.2f,1.4f,.65f,.2f))return true;
             if(!(weapons.destroyedMask&128u)&&insideBox(x,z,-1.2f,-18.5f,.7f,.55f))return true;
             if(!(weapons.destroyedMask&256u)&&insideBox(x,z,4.8f,-21.5f,.65f,.55f))return true;
+            if(!(weapons.destroyedMask&512u)&&insideBox(x,z,-8.5f,4.f,.5f,.5f))return true;
+            if(insideBox(x,z,11.6f,-19.4f,1.35f,.62f,.15f))return true; // CT car
             // Puzzle door + armory shell
             if(puzzle.doorBlocking()&&insideBox(x,z,13.2f,-8.f,.25f,1.4f))return true;
             if(insideBox(x,z,16.4f,-8.f,.25f,1.6f)||insideBox(x,z,14.8f,-6.4f,1.4f,.25f)||insideBox(x,z,14.8f,-9.6f,1.4f,.25f))return true;
@@ -1197,7 +1227,7 @@ struct App {
         weapons.denyFlash=std::max(0.f,weapons.denyFlash-dt*3.8f);
         weapons.viewPunch=std::max(0.f,weapons.viewPunch-dt*5.5f);
         for(float& life:weapons.impactLife) life=std::max(0.f,life-dt*1.6f);
-        weapons.tracerLife=std::max(0.f,weapons.tracerLife-dt*3.2f);
+        for(float& life:weapons.tracerLife) life=std::max(0.f,life-dt*3.2f);
         if(jumpPadCooldown>0.f) jumpPadCooldown=std::max(0.f,jumpPadCooldown-dt);
         if(dustTipTimer>0.f){
             const float prev=dustTipTimer;
@@ -1427,9 +1457,15 @@ struct App {
         gl.Uniform3f(uLaserB2, puzzle.laserB[2].x, puzzle.laserB[2].y, puzzle.laserB[2].z);
         gl.Uniform3f(uEmitterPos, PuzzleState::kEmitterPos.x, PuzzleState::kEmitterPos.y, PuzzleState::kEmitterPos.z);
         gl.Uniform3f(uCatcherPos, PuzzleState::kCatcherPos.x, PuzzleState::kCatcherPos.y, PuzzleState::kCatcherPos.z);
-        gl.Uniform3f(uTracerA, weapons.tracerA.x, weapons.tracerA.y, weapons.tracerA.z);
-        gl.Uniform3f(uTracerB, weapons.tracerB.x, weapons.tracerB.y, weapons.tracerB.z);
-        gl.Uniform1f(uTracerLife, weapons.tracerLife);
+        gl.Uniform3f(uTracerA0, weapons.tracerA[0].x, weapons.tracerA[0].y, weapons.tracerA[0].z);
+        gl.Uniform3f(uTracerB0, weapons.tracerB[0].x, weapons.tracerB[0].y, weapons.tracerB[0].z);
+        gl.Uniform1f(uTracerLife0, weapons.tracerLife[0]);
+        gl.Uniform3f(uTracerA1, weapons.tracerA[1].x, weapons.tracerA[1].y, weapons.tracerA[1].z);
+        gl.Uniform3f(uTracerB1, weapons.tracerB[1].x, weapons.tracerB[1].y, weapons.tracerB[1].z);
+        gl.Uniform1f(uTracerLife1, weapons.tracerLife[1]);
+        gl.Uniform3f(uTracerA2, weapons.tracerA[2].x, weapons.tracerA[2].y, weapons.tracerA[2].z);
+        gl.Uniform3f(uTracerB2, weapons.tracerB[2].x, weapons.tracerB[2].y, weapons.tracerB[2].z);
+        gl.Uniform1f(uTracerLife2, weapons.tracerLife[2]);
         const int wid = static_cast<int>(weapons.current);
         const float ammoFrac = (wid > 0 && kWeapons[wid].magSize > 0)
             ? static_cast<float>(weapons.ammoMag[wid]) / static_cast<float>(kWeapons[wid].magSize) : 0.f;

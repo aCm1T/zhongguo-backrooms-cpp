@@ -57,9 +57,15 @@ uniform vec3 uLaserB2;
 uniform vec3 uEmitterPos;
 uniform vec3 uCatcherPos;
 uniform float uAmmoFrac;
-uniform vec3 uTracerA;
-uniform vec3 uTracerB;
-uniform float uTracerLife;
+uniform vec3 uTracerA0;
+uniform vec3 uTracerB0;
+uniform float uTracerLife0;
+uniform vec3 uTracerA1;
+uniform vec3 uTracerB1;
+uniform float uTracerLife1;
+uniform vec3 uTracerA2;
+uniform vec3 uTracerB2;
+uniform float uTracerLife2;
 
 #define MAX_STEPS 92
 #define MAX_DIST 70.0
@@ -332,9 +338,9 @@ vec2 mapDust2(vec3 p) {
     r = take(r, sdCylinder(p - vec3(3.8, 1.8, -10.5), .08, 1.8), 17.0);
     r = take(r, sdCylinder(p - vec3(-5.5, 1.6, -13.0), .08, 1.6), 17.0);
 
-    // Mid double-door slabs + Long A pit lip
-    r = take(r, sdBox(p - vec3(-0.85, 1.5, 0.55), vec3(0.55, 1.5, 0.06)), 17.0);
-    r = take(r, sdBox(p - vec3( 0.85, 1.5, 0.55), vec3(0.55, 1.5, 0.06)), 17.0);
+    // Mid double-door slabs (slightly ajar) + Long A pit lip
+    r = take(r, sdBox(p - vec3(-0.92, 1.5, 0.55), vec3(0.52, 1.5, 0.06)), 17.0);
+    r = take(r, sdBox(p - vec3( 0.98, 1.5, 0.62), vec3(0.52, 1.5, 0.06)), 17.0);
     r = take(r, sdBox(p - vec3(10.9, -0.15, -11.5), vec3(2.4, 0.35, 1.6)), 5.0); // long pit
     // Pit rim walls
     r = take(r, sdBox(p - vec3(8.55, 0.55, -11.5), vec3(0.18, 0.7, 1.7)), 19.0);
@@ -350,8 +356,9 @@ vec2 mapDust2(vec3 p) {
     r = take(r, sdSphere(p - vec3(6.8, 3.5, -18.5), .55), 16.0);
     r = take(r, sdCylinder(p - vec3(-12.2, 1.5, -17.5), .1, 1.5), 16.0);
     r = take(r, sdSphere(p - vec3(-12.2, 3.2, -17.5), .5), 16.0);
-    // CT spawn awning
+    // CT spawn awning + blue car silhouette
     r = take(r, sdBox(p - vec3(14.0, 3.7, -21.0), vec3(2.8, .12, 2.3)), 17.0);
+    r = take(r, sdRoundBox(p - vec3(11.6, 0.55, -19.4), vec3(1.35, 0.42, 0.62), 0.08), 13.0);
 
     // Portal puzzle: floor button near mid, sealed armory door on Long A wall
     {
@@ -437,7 +444,9 @@ vec2 mapPortals(vec3 p, vec2 r) {
     if (uLaserSegs > 0) r = take(r, sdCapsule(p, uLaserA0, uLaserB0, 0.035), 37.0);
     if (uLaserSegs > 1) r = take(r, sdCapsule(p, uLaserA1, uLaserB1, 0.035), 37.0);
     if (uLaserSegs > 2) r = take(r, sdCapsule(p, uLaserA2, uLaserB2, 0.035), 37.0);
-    if (uTracerLife > .02) r = take(r, sdCapsule(p, uTracerA, uTracerB, 0.012 + 0.01 * uTracerLife), 43.0);
+    if (uTracerLife0 > .02) r = take(r, sdCapsule(p, uTracerA0, uTracerB0, 0.012 + 0.01 * uTracerLife0), 43.0);
+    if (uTracerLife1 > .02) r = take(r, sdCapsule(p, uTracerA1, uTracerB1, 0.011 + 0.01 * uTracerLife1), 44.0);
+    if (uTracerLife2 > .02) r = take(r, sdCapsule(p, uTracerA2, uTracerB2, 0.011 + 0.01 * uTracerLife2), 45.0);
     if (uImpactLife > .01) r = take(r, sdSphere(p - uImpactPos, .06 + .04 * (1.0 - uImpactLife)), 26.0);
     if (uImpactLife1 > .01) r = take(r, sdSphere(p - uImpactPos1, .05 + .04 * (1.0 - uImpactLife1)), 26.0);
     if (uImpactLife2 > .01) r = take(r, sdSphere(p - uImpactPos2, .05 + .04 * (1.0 - uImpactLife2)), 26.0);
@@ -567,7 +576,7 @@ vec3 palette(float id, vec3 p) {
     else if (id < 40.5) c = vec3(1.0,.35,.12);      // catcher on
     else if (id < 41.5) c = vec3(.45,.72,.85);      // laser bridge
     else if (id < 42.5) c = vec3(.95,.55,.18);      // jump pad
-    else if (id < 43.5) c = vec3(1.0,.85,.45);      // tracer
+    else if (id < 45.5) c = vec3(1.0,.85,.45);      // tracers
     else c = vec3(.65,.86,.95);
     if (id == 3.0 && uZone == 1) {
         float brick = step(.92, fract(p.y * 2.4)) + step(.94, fract((p.z + floor(p.y*2.4)*.3)*1.2));
@@ -617,9 +626,19 @@ vec3 shadeSurface(vec3 ro, vec3 rd, vec2 hit, bool secondary) {
     vec3 warm = (uZone==3||uZone==7) ? vec3(.55,.82,1.0) :
                 (uZone==9) ? vec3(1.0,.82,.55) : vec3(1.0,.72,.43);
     vec3 col = base * (.13 + .10 * max(n.y,0.0) + diff * shadow * attenuation * 4.2 * warm) * ao;
+    float impactGlow = 0.0;
+    if (hit.y > 25.5 && hit.y < 26.5) {
+        if (uImpactLife > .01) impactGlow = max(impactGlow, uImpactLife * (1.0 - smoothstep(0.04, 0.14, length(p - uImpactPos))));
+        if (uImpactLife1 > .01) impactGlow = max(impactGlow, uImpactLife1 * (1.0 - smoothstep(0.04, 0.14, length(p - uImpactPos1))));
+        if (uImpactLife2 > .01) impactGlow = max(impactGlow, uImpactLife2 * (1.0 - smoothstep(0.04, 0.14, length(p - uImpactPos2))));
+    }
+    float tracerGlow = 0.0;
+    if (hit.y > 42.5 && hit.y < 43.5) tracerGlow = uTracerLife0;
+    else if (hit.y > 43.5 && hit.y < 44.5) tracerGlow = uTracerLife1;
+    else if (hit.y > 44.5 && hit.y < 45.5) tracerGlow = uTracerLife2;
     float emissive = step(20.5, hit.y) * step(hit.y, 23.5)
                    + step(23.5, hit.y) * step(hit.y, 25.5) * 1.8
-                   + step(25.5, hit.y) * step(hit.y, 26.5) * uImpactLife * 2.5
+                   + impactGlow * 2.5
                    + step(26.5, hit.y) * step(hit.y, 27.5) * 1.4
                    + step(27.5, hit.y) * step(hit.y, 29.5) * (.55 + .35 * sin(uTime * 3.0))
                    + step(30.5, hit.y) * step(hit.y, 31.5) * 2.2
@@ -630,11 +649,11 @@ vec3 shadeSurface(vec3 ro, vec3 rd, vec2 hit, bool secondary) {
                    + step(39.5, hit.y) * step(hit.y, 40.5) * 2.4
                    + step(40.5, hit.y) * step(hit.y, 41.5) * (.4 + .3 * abs(sin(uTime * 2.5)))
                    + step(41.5, hit.y) * step(hit.y, 42.5) * (1.2 + .8 * abs(sin(uTime * 6.0)))
-                   + step(42.5, hit.y) * step(hit.y, 43.5) * uTracerLife * 2.8;
+                   + tracerGlow * 2.8;
     col += base * emissive * (hit.y < 21.5 ? 2.4 : (hit.y < 23.5 ? 1.25 : 1.6));
     if (hit.y > 33.5 && hit.y < 36.5) col *= 0.55; // ghost preview translucency feel
     if (hit.y > 36.5 && hit.y < 37.5) col += vec3(1.0, .25, .1) * .35;
-    if (hit.y > 42.5 && hit.y < 43.5) col += vec3(1.0, .8, .3) * uTracerLife;
+    if (tracerGlow > 0.0) col += vec3(1.0, .8, .3) * tracerGlow;
     if (hit.y > 32.5 && hit.y < 33.5) {
         // Heart stamp on the weighted cube.
         float hx = abs(mod(p.x + p.z, 0.64) - 0.32);
@@ -798,8 +817,8 @@ void main() {
         color += vec3(.55,.42,.22)*dust*.35;
     }
 
-    // First-person weapon viewmodel (camera-local SDF).
-    if (uShowHud != 0) {
+    // First-person weapon viewmodel stays visible even with HUD hidden.
+    {
         vec3 gun = shadeViewmodel(uv);
         if (gun.x >= 0.0) color = gun;
     }

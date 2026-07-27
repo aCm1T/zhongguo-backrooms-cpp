@@ -194,10 +194,12 @@ inline float sceneDistance(int zone, Vec3 p, std::uint32_t destroyedMask, std::u
         take(sdCylinderY(p - Vec3{2.f, .05f, -20.f}, 1.1f, .05f), 28);
         take(sdCylinderY(p - Vec3{-8.f, .05f, -15.5f}, 1.0f, .05f), 29);
 
-        // Mid doors + long pit + palms (visuals mirrored lightly for hitscan)
-        take(sdBox(p - Vec3{-.85f, 1.5f, .55f}, {.55f, 1.5f, .06f}), 17);
-        take(sdBox(p - Vec3{.85f, 1.5f, .55f}, {.55f, 1.5f, .06f}), 17);
+        // Mid doors (slightly ajar) + long pit + palms (visuals mirrored lightly for hitscan)
+        take(sdBox(p - Vec3{-.92f, 1.5f, .55f}, {.52f, 1.5f, .06f}), 17);
+        take(sdBox(p - Vec3{.98f, 1.5f, .62f}, {.52f, 1.5f, .06f}), 17);
         take(sdBox(p - Vec3{10.9f, -.15f, -11.5f}, {2.4f, .35f, 1.6f}), 5);
+        take(sdRoundBox(p - Vec3{11.6f, .55f, -19.4f}, {1.35f, .42f, .62f}, .08f), 13);
+        take(sdCylinderY(p - Vec3{-2.2f, .45f, 3.8f}, .35f, .45f), 13);
 
         if (puzzle) {
             take(sdCylinderY(p - Vec3{0.f, .06f, 5.4f}, .7f, .06f), puzzle->buttonOn ? 31 : 30);
@@ -356,9 +358,10 @@ struct WeaponLoadout {
     Vec3 impactPos[3]{};
     float impactLife[3]{};
     int impactCursor{};
-    Vec3 tracerA{};
-    Vec3 tracerB{};
-    float tracerLife{};
+    Vec3 tracerA[3]{};
+    Vec3 tracerB[3]{};
+    float tracerLife[3]{};
+    int tracerCursor{};
     std::uint32_t destroyedMask{};
     std::uint32_t targetMask{};
     int targetsDown{};
@@ -388,16 +391,17 @@ struct WeaponLoadout {
         impactCursor = (impactCursor + 1) % 3;
     }
     void pushTracer(Vec3 from, Vec3 to) {
-        tracerA = from;
-        tracerB = to;
-        tracerLife = 1.f;
+        tracerA[tracerCursor] = from;
+        tracerB[tracerCursor] = to;
+        tracerLife[tracerCursor] = 1.f;
+        tracerCursor = (tracerCursor + 1) % 3;
     }
     void resetArena() {
         destroyedMask = 0;
         targetMask = 0;
         targetsDown = 0;
         clearPortals();
-        tracerLife = 0.f;
+        for (float& life : tracerLife) life = 0.f;
         for (float& life : impactLife) life = 0.f;
     }
 };
