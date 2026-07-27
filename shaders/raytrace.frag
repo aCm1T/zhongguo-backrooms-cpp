@@ -820,12 +820,12 @@ void main() {
         }
         // Mag ammo fraction bar under crosshair.
         if (uWeapon > 0) {
-            float half = 54.0 * clamp(uAmmoFrac, 0.0, 1.0);
+            float ammoHalf = 54.0 * clamp(uAmmoFrac, 0.0, 1.0);
             float ammoBg = step(uResolution.x*.5-54.0, gl_FragCoord.x) *
                            step(gl_FragCoord.x, uResolution.x*.5+54.0) *
                            step(42.0, gl_FragCoord.y) * step(gl_FragCoord.y, 47.0);
-            float ammoFg = step(uResolution.x*.5-half, gl_FragCoord.x) *
-                           step(gl_FragCoord.x, uResolution.x*.5+half) *
+            float ammoFg = step(uResolution.x*.5-ammoHalf, gl_FragCoord.x) *
+                           step(gl_FragCoord.x, uResolution.x*.5+ammoHalf) *
                            step(43.0, gl_FragCoord.y) * step(gl_FragCoord.y, 46.0);
             color = mix(color, vec3(.12,.12,.11), ammoBg * .65);
             vec3 ammoCol = uAmmoFrac < .2 ? vec3(.9,.25,.18) : vec3(.85,.78,.55);
