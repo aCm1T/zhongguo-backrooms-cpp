@@ -125,7 +125,7 @@ constexpr int SDL_GL_DOUBLEBUFFER = 5;
 constexpr int SDL_GL_DEPTH_SIZE = 6;
 
 // SDL2 scancodes used by the game. These values are part of SDL's stable ABI.
-constexpr int SC_A = 4, SC_C = 6, SC_D = 7, SC_E = 8, SC_F = 9, SC_M = 16, SC_Q = 20;
+constexpr int SC_A = 4, SC_C = 6, SC_D = 7, SC_E = 8, SC_F = 9, SC_G = 10, SC_M = 16, SC_Q = 20;
 constexpr int SC_R = 21, SC_S = 22, SC_W = 26;
 constexpr int SC_0 = 39, SC_1 = 30, SC_2 = 31, SC_3 = 32, SC_4 = 33;
 constexpr int SC_5 = 34, SC_6 = 35, SC_7 = 36, SC_8 = 37, SC_9 = 38;

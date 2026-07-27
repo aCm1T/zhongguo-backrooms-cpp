@@ -33,6 +33,11 @@ uniform int uTargetMask;
 uniform float uHitMarker;
 uniform float uSpread;
 uniform float uMoveSway;
+uniform float uReload;
+uniform vec3 uCubePos;
+uniform int uButtonOn;
+uniform int uDoorOpen;
+uniform int uCubeAlive;
 
 #define MAX_STEPS 92
 #define MAX_DIST 70.0
@@ -305,6 +310,39 @@ vec2 mapDust2(vec3 p) {
     r = take(r, sdCylinder(p - vec3(3.8, 1.8, -10.5), .08, 1.8), 17.0);
     r = take(r, sdCylinder(p - vec3(-5.5, 1.6, -13.0), .08, 1.6), 17.0);
 
+    // Mid double-door slabs + Long A pit lip
+    r = take(r, sdBox(p - vec3(-0.85, 1.5, 0.55), vec3(0.55, 1.5, 0.06)), 17.0);
+    r = take(r, sdBox(p - vec3( 0.85, 1.5, 0.55), vec3(0.55, 1.5, 0.06)), 17.0);
+    r = take(r, sdBox(p - vec3(10.9, -0.15, -11.5), vec3(2.4, 0.35, 1.6)), 5.0); // long pit
+    // Palm-ish trunks near A/B
+    r = take(r, sdCylinder(p - vec3(6.8, 1.7, -18.5), .11, 1.7), 16.0);
+    r = take(r, sdSphere(p - vec3(6.8, 3.5, -18.5), .55), 16.0);
+    r = take(r, sdCylinder(p - vec3(-12.2, 1.5, -17.5), .1, 1.5), 16.0);
+    r = take(r, sdSphere(p - vec3(-12.2, 3.2, -17.5), .5), 16.0);
+    // CT spawn awning
+    r = take(r, sdBox(p - vec3(14.0, 3.7, -21.0), vec3(2.8, .12, 2.3)), 17.0);
+
+    // Portal puzzle: floor button near mid, sealed armory door on Long A wall
+    {
+        float btn = sdCylinder(p - vec3(0.0, 0.06, 5.4), 0.7, 0.06);
+        r = take(r, btn, uButtonOn != 0 ? 31.0 : 30.0);
+    }
+    if (uDoorOpen == 0) {
+        r = take(r, sdBox(p - vec3(13.2, 1.5, -8.0), vec3(0.18, 1.5, 1.4)), 32.0);
+    } else {
+        // Open door slides upward as a visual remnant
+        r = take(r, sdBox(p - vec3(13.2, 3.4, -8.0), vec3(0.18, 0.35, 1.4)), 32.0);
+    }
+    // Armory interior crate (ammo reward room)
+    r = take(r, sdBox(p - vec3(15.2, 0.45, -8.0), vec3(0.55, 0.45, 0.55)), 5.0);
+    r = take(r, sdBox(p - vec3(16.4, 2.0, -8.0), vec3(0.25, 2.0, 1.6)), 19.0);
+    r = take(r, sdBox(p - vec3(14.8, 2.0, -6.4), vec3(1.4, 2.0, 0.25)), 19.0);
+    r = take(r, sdBox(p - vec3(14.8, 2.0, -9.6), vec3(1.4, 2.0, 0.25)), 19.0);
+
+    if (uCubeAlive != 0) {
+        r = take(r, sdRoundBox(p - uCubePos, vec3(0.32, 0.32, 0.32), 0.04), 33.0);
+    }
+
     // Practice range targets
     if (targetAlive(0)) r = take(r, targetProp(p, vec3(0.0, 1.15, 4.2)), 27.0);
     if (targetAlive(1)) r = take(r, targetProp(p, vec3(11.0, 1.15, -8.0)), 27.0);
@@ -459,6 +497,10 @@ vec3 palette(float id, vec3 p) {
     else if (id < 27.5) c = vec3(.85,.18,.12);    // practice target
     else if (id < 28.5) c = vec3(.75,.12,.08);    // A site pad
     else if (id < 29.5) c = vec3(.12,.35,.75);    // B site pad
+    else if (id < 30.5) c = vec3(.55,.12,.10);    // button off
+    else if (id < 31.5) c = vec3(.2,1.0,.45);     // button on
+    else if (id < 32.5) c = vec3(.72,.74,.78);    // puzzle door
+    else if (id < 33.5) c = vec3(.82,.55,.18);    // weighted cube
     else c = vec3(.65,.86,.95);
     if (id == 3.0 && uZone == 1) {
         float brick = step(.92, fract(p.y * 2.4)) + step(.94, fract((p.z + floor(p.y*2.4)*.3)*1.2));
@@ -512,8 +554,16 @@ vec3 shadeSurface(vec3 ro, vec3 rd, vec2 hit, bool secondary) {
                    + step(23.5, hit.y) * step(hit.y, 25.5) * 1.8
                    + step(25.5, hit.y) * step(hit.y, 26.5) * uImpactLife * 2.5
                    + step(26.5, hit.y) * step(hit.y, 27.5) * 1.4
-                   + step(27.5, hit.y) * step(hit.y, 29.5) * (.55 + .35 * sin(uTime * 3.0));
+                   + step(27.5, hit.y) * step(hit.y, 29.5) * (.55 + .35 * sin(uTime * 3.0))
+                   + step(30.5, hit.y) * step(hit.y, 31.5) * 2.2
+                   + step(32.5, hit.y) * step(hit.y, 33.5) * (.25 + .2 * abs(sin(uTime * 2.0)));
     col += base * emissive * (hit.y < 21.5 ? 2.4 : (hit.y < 23.5 ? 1.25 : 1.6));
+    if (hit.y > 32.5 && hit.y < 33.5) {
+        // Heart stamp on the weighted cube.
+        float hx = abs(mod(p.x + p.z, 0.64) - 0.32);
+        float hy = abs(mod(p.y, 0.64) - 0.32);
+        if (hx + hy < 0.18) col = mix(col, vec3(0.75, 0.12, 0.18), 0.55);
+    }
     float spec = pow(max(dot(reflect(-l,n),-rd),0.0),34.0);
     col += spec * shadow * .35;
     return col;
@@ -553,14 +603,14 @@ float viewmodelGun(vec3 p) {
     float swayX = sin(uTime * 1.7) * .012 * uMoveSway;
     float swayY = cos(uTime * 2.1) * .008 * uMoveSway;
     p.x += swayX;
-    p.y += swayY + uRecoil * .14;
-    p.z += uRecoil * .06;
+    p.y += swayY + uRecoil * .14 - uReload * .22;
+    p.z += uRecoil * .06 + uReload * .08;
+    p.x += uReload * .05;
     float body = sdRoundBox(p - vec3(.30, -.22, .55), vec3(.05, .055, .22), .02);
     float barrel = sdCylinder((p - vec3(.30, -.18, .80)).xzy, .016, .18);
     float grip = sdRoundBox(p - vec3(.30, -.33, .48), vec3(.032, .085, .05), .012);
     float d = min(min(body, barrel), grip);
     if (uWeapon == 0) {
-        // Aperture-like portal gun: dish + twin prongs + glowing core
         float dish = sdCylinder((p - vec3(.38, -.15, .66)).xzy, .07, .025);
         float core = sdSphere(p - vec3(.38, -.15, .66), .035);
         float prongL = sdBox(p - vec3(.38, -.05, .62), vec3(.01, .07, .01));
@@ -568,12 +618,12 @@ float viewmodelGun(vec3 p) {
         float tank = sdRoundBox(p - vec3(.22, -.18, .42), vec3(.04, .05, .08), .015);
         d = min(d, min(min(dish, core), min(min(prongL, prongR), tank)));
     } else if (uWeapon == 1) {
-        float slide = sdRoundBox(p - vec3(.30, -.16, .62), vec3(.035, .025, .12), .008);
-        float mag = sdRoundBox(p - vec3(.30, -.38, .50), vec3(.018, .07, .035), .008);
+        float slide = sdRoundBox(p - vec3(.30, -.16 - uReload * .04, .62), vec3(.035, .025, .12), .008);
+        float mag = sdRoundBox(p - vec3(.30, -.38 - uReload * .12, .50), vec3(.018, .07, .035), .008);
         d = min(d, min(slide, mag));
     } else {
         float stock = sdRoundBox(p - vec3(.30, -.20, .32), vec3(.04, .045, .11), .015);
-        float mag = sdRoundBox(p - vec3(.30, -.40, .52), vec3(.02, .09, .04), .01);
+        float mag = sdRoundBox(p - vec3(.30, -.40 - uReload * .16, .52), vec3(.02, .09, .04), .01);
         float handguard = sdRoundBox(p - vec3(.30, -.17, .72), vec3(.04, .03, .1), .01);
         d = min(d, min(stock, min(mag, handguard)));
     }
@@ -708,8 +758,6 @@ void main() {
                         step(uResolution.y-92.0,gl_FragCoord.y)*step(gl_FragCoord.y,uResolution.y-24.0);
         color=mix(color,vec3(.72,.12,.07),zoneBar);
     }
-    vec2 uiUv=vec2(gl_FragCoord.x/uResolution.x,1.0-gl_FragCoord.y/uResolution.y);
-    vec4 overlay=texture(uUiTexture,uiUv);
-    color=overlay.rgb+color*(1.0-overlay.a); // Cairo supplies premultiplied ARGB
+    // UI text is composited in a full-resolution overlay pass after blit.
     fragColor=vec4(color,1.0);
 }

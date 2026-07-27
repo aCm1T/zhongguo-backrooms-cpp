@@ -44,7 +44,11 @@ constexpr GLenum GL_READ_FRAMEBUFFER = 0x8CA8;
 constexpr GLenum GL_DRAW_FRAMEBUFFER = 0x8CA9;
 constexpr GLenum GL_COLOR_ATTACHMENT0 = 0x8CE0;
 constexpr GLenum GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
+constexpr GLenum GL_BLEND = 0x0BE2;
+constexpr GLenum GL_ONE = 1;
+constexpr GLenum GL_ONE_MINUS_SRC_ALPHA = 0x0303;
 constexpr GLboolean GL_FALSE = 0;
+constexpr GLboolean GL_TRUE = 1;
 
 struct GLApi {
     void (*Viewport)(GLint,GLint,GLsizei,GLsizei){};
@@ -86,6 +90,9 @@ struct GLApi {
     void (*Uniform2f)(GLint,GLfloat,GLfloat){};
     void (*Uniform3f)(GLint,GLfloat,GLfloat,GLfloat){};
     void (*Uniform4f)(GLint,GLfloat,GLfloat,GLfloat,GLfloat){};
+    void (*Enable)(GLenum){};
+    void (*Disable)(GLenum){};
+    void (*BlendFunc)(GLenum,GLenum){};
     void (*DrawArrays)(GLenum,GLint,GLsizei){};
 
     template<typename T> static T load(const char* name) {
@@ -105,7 +112,8 @@ struct GLApi {
         LOAD(GetShaderInfoLog); LOAD(DeleteShader); LOAD(CreateProgram); LOAD(AttachShader);
         LOAD(LinkProgram); LOAD(GetProgramiv); LOAD(GetProgramInfoLog); LOAD(DeleteProgram);
         LOAD(UseProgram); LOAD(GetUniformLocation); LOAD(Uniform1f); LOAD(Uniform1i);
-        LOAD(Uniform2f); LOAD(Uniform3f); LOAD(Uniform4f); LOAD(DrawArrays);
+        LOAD(Uniform2f); LOAD(Uniform3f); LOAD(Uniform4f); LOAD(Enable); LOAD(Disable);
+        LOAD(BlendFunc); LOAD(DrawArrays);
 #undef LOAD
     }
 };

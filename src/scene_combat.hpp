@@ -50,6 +50,30 @@ struct RayHit {
     int material{-1};
 };
 
+struct PuzzleState {
+    Vec3 cubePos{2.2f, .42f, 14.2f};
+    Vec3 cubeVel{};
+    bool cubeHeld{};
+    bool cubeGrounded{true};
+    bool buttonOn{};
+    bool doorOpen{};
+    bool armoryLooted{};
+    bool nearCube{};
+    bool nearArmory{};
+
+    void reset() {
+        cubePos = {2.2f, .42f, 14.2f};
+        cubeVel = {};
+        cubeHeld = false;
+        cubeGrounded = true;
+        buttonOn = false;
+        doorOpen = false;
+        armoryLooted = false;
+        nearCube = false;
+        nearArmory = false;
+    }
+};
+
 inline constexpr Vec3 kPracticeTargets[] = {
     {0.f, 1.15f, 4.2f},     // mid
     {11.f, 1.15f, -8.f},    // long A
@@ -62,7 +86,7 @@ inline constexpr int kPracticeTargetCount = 5;
 
 // CPU mirror of the raytraced world used for portal placement and hitscan.
 inline float sceneDistance(int zone, Vec3 p, std::uint32_t destroyedMask, std::uint32_t targetMask,
-                           int* materialOut = nullptr) {
+                           int* materialOut = nullptr, const PuzzleState* puzzle = nullptr) {
     float best = p.y;
     int material = 1;
     auto take = [&](float d, int mat) {
@@ -155,6 +179,22 @@ inline float sceneDistance(int zone, Vec3 p, std::uint32_t destroyedMask, std::u
         take(sdCylinderY(p - Vec3{2.f, .05f, -20.f}, 1.1f, .05f), 28);
         take(sdCylinderY(p - Vec3{-8.f, .05f, -15.5f}, 1.0f, .05f), 29);
 
+        // Mid doors + long pit + palms (visuals mirrored lightly for hitscan)
+        take(sdBox(p - Vec3{-.85f, 1.5f, .55f}, {.55f, 1.5f, .06f}), 17);
+        take(sdBox(p - Vec3{.85f, 1.5f, .55f}, {.55f, 1.5f, .06f}), 17);
+        take(sdBox(p - Vec3{10.9f, -.15f, -11.5f}, {2.4f, .35f, 1.6f}), 5);
+
+        if (puzzle) {
+            take(sdCylinderY(p - Vec3{0.f, .06f, 5.4f}, .7f, .06f), puzzle->buttonOn ? 31 : 30);
+            if (!puzzle->doorOpen)
+                take(sdBox(p - Vec3{13.2f, 1.5f, -8.f}, {.18f, 1.5f, 1.4f}), 32);
+            take(sdBox(p - Vec3{16.4f, 2.f, -8.f}, {.25f, 2.f, 1.6f}), 19);
+            take(sdBox(p - Vec3{14.8f, 2.f, -6.4f}, {1.4f, 2.f, .25f}), 19);
+            take(sdBox(p - Vec3{14.8f, 2.f, -9.6f}, {1.4f, 2.f, .25f}), 19);
+            if (!puzzle->cubeHeld)
+                take(sdRoundBox(p - puzzle->cubePos, {.32f, .32f, .32f}, .04f), 33);
+        }
+
         for (int i = 0; i < kPracticeTargetCount; ++i) {
             if (targetMask & (1u << i)) continue;
             const Vec3 c = kPracticeTargets[i];
@@ -182,29 +222,31 @@ inline float sceneDistance(int zone, Vec3 p, std::uint32_t destroyedMask, std::u
     return best;
 }
 
-inline Vec3 sceneNormal(int zone, Vec3 p, std::uint32_t destroyedMask, std::uint32_t targetMask) {
+inline Vec3 sceneNormal(int zone, Vec3 p, std::uint32_t destroyedMask, std::uint32_t targetMask,
+                        const PuzzleState* puzzle = nullptr) {
     constexpr float e = .004f;
-    const float d = sceneDistance(zone, p, destroyedMask, targetMask);
+    const float d = sceneDistance(zone, p, destroyedMask, targetMask, nullptr, puzzle);
     return vnormalize({
-        sceneDistance(zone, p + Vec3{e, 0, 0}, destroyedMask, targetMask) - d,
-        sceneDistance(zone, p + Vec3{0, e, 0}, destroyedMask, targetMask) - d,
-        sceneDistance(zone, p + Vec3{0, 0, e}, destroyedMask, targetMask) - d});
+        sceneDistance(zone, p + Vec3{e, 0, 0}, destroyedMask, targetMask, nullptr, puzzle) - d,
+        sceneDistance(zone, p + Vec3{0, e, 0}, destroyedMask, targetMask, nullptr, puzzle) - d,
+        sceneDistance(zone, p + Vec3{0, 0, e}, destroyedMask, targetMask, nullptr, puzzle) - d});
 }
 
 inline RayHit sceneRaycast(int zone, Vec3 ro, Vec3 rd, std::uint32_t destroyedMask,
-                           std::uint32_t targetMask, float maxDist = 48.f) {
+                           std::uint32_t targetMask, float maxDist = 48.f,
+                           const PuzzleState* puzzle = nullptr) {
     RayHit result;
     float t = .05f;
     rd = vnormalize(rd);
     for (int i = 0; i < 140; ++i) {
         const Vec3 p = ro + rd * t;
         int material = -1;
-        const float d = sceneDistance(zone, p, destroyedMask, targetMask, &material);
+        const float d = sceneDistance(zone, p, destroyedMask, targetMask, &material, puzzle);
         if (d < .012f) {
             result.hit = true;
             result.t = t;
             result.pos = p;
-            result.normal = sceneNormal(zone, p, destroyedMask, targetMask);
+            result.normal = sceneNormal(zone, p, destroyedMask, targetMask, puzzle);
             if (vdot(result.normal, rd) > 0.f) result.normal = -result.normal;
             result.material = material;
             return result;

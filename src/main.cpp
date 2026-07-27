@@ -219,8 +219,7 @@ struct App {
     SDL_Window* window{};
     SDL_GLContext context{};
     GLApi gl;
-    GLuint program{};
-    GLuint vao{};
+    GLuint program{}, uiProgram{}, vao{};
     int width{kInitialWidth}, height{kInitialHeight}, drawableWidth{kInitialWidth}, drawableHeight{kInitialHeight};
     bool running{true}, mouseCaptured{}, showHud{true}, uiDirty{true}, nearSeal{}, nearPortal{}, playerMoving{};
     bool mouseLeft{}, mouseRight{}, firePressed{};
@@ -228,8 +227,10 @@ struct App {
     UserSettings settings;
     AudioEngine audio;
     WeaponLoadout weapons;
+    PuzzleState puzzle;
     Vec3 moveVelocity{};
     float currentSpread{};
+    bool nearCubePrompt{};
     Screen screen{Screen::Home}, returnScreen{Screen::Home};
     int selection{}, archiveSelection{};
     int zone{0};
@@ -255,6 +256,8 @@ struct App {
     GLint uPortalBluePos{}, uPortalBlueN{}, uPortalOrangePos{}, uPortalOrangeN{};
     GLint uImpactPos{}, uImpactLife{}, uImpactPos1{}, uImpactLife1{}, uImpactPos2{}, uImpactLife2{};
     GLint uDestroyedMask{}, uTargetMask{}, uHitMarker{}, uSpread{}, uMoveSway{};
+    GLint uReload{}, uCubePos{}, uButtonOn{}, uDoorOpen{}, uCubeAlive{};
+    GLint uUiOverlayTex{};
 
     void initialize(QualityPreference qualityPreference) {
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0)
@@ -297,6 +300,8 @@ struct App {
         const std::string shaderDir = BACKROOMS_SHADER_DIR;
         program = createProgram(gl, loadText(shaderDir + "/fullscreen.vert"),
                                 loadText(shaderDir + "/raytrace.frag"));
+        uiProgram = createProgram(gl, loadText(shaderDir + "/fullscreen.vert"),
+                                  loadText(shaderDir + "/ui_overlay.frag"));
         gl.GenVertexArrays(1, &vao);
         gl.BindVertexArray(vao);
         gl.UseProgram(program);
@@ -330,6 +335,15 @@ struct App {
         uHitMarker=gl.GetUniformLocation(program,"uHitMarker");
         uSpread=gl.GetUniformLocation(program,"uSpread");
         uMoveSway=gl.GetUniformLocation(program,"uMoveSway");
+        uReload=gl.GetUniformLocation(program,"uReload");
+        uCubePos=gl.GetUniformLocation(program,"uCubePos");
+        uButtonOn=gl.GetUniformLocation(program,"uButtonOn");
+        uDoorOpen=gl.GetUniformLocation(program,"uDoorOpen");
+        uCubeAlive=gl.GetUniformLocation(program,"uCubeAlive");
+        gl.UseProgram(uiProgram);
+        uUiOverlayTex=gl.GetUniformLocation(uiProgram,"uUiTexture");
+        gl.Uniform1i(uUiOverlayTex,0);
+        gl.UseProgram(program);
         gl.GenTextures(1,&uiTexture);gl.ActiveTexture(GL_TEXTURE0);gl.BindTexture(GL_TEXTURE_2D,uiTexture);
         gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
         gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
@@ -353,6 +367,7 @@ struct App {
         if(sceneColor)gl.DeleteTextures(1,&sceneColor);
         if(sceneFbo)gl.DeleteFramebuffers(1,&sceneFbo);
         if(uiTexture)gl.DeleteTextures(1,&uiTexture);
+        if (uiProgram) gl.DeleteProgram(uiProgram);
         if (program) gl.DeleteProgram(program);
         if (vao) gl.DeleteVertexArrays(1, &vao);
         if (context) SDL_GL_DeleteContext(context);
@@ -401,9 +416,9 @@ struct App {
     }
 
     void placePortal(bool blue) {
-        const RayHit hit=sceneRaycast(zone,camera,aimDirection(false),weapons.destroyedMask,weapons.targetMask);
+        const RayHit hit=sceneRaycast(zone,camera,aimDirection(false),weapons.destroyedMask,weapons.targetMask,48.f,&puzzle);
         if(!hit.hit||hit.t>42.f)return;
-        if(hit.material==27||hit.material==28||hit.material==29)return; // no portals on pads/targets
+        if(hit.material==27||hit.material==28||hit.material==29||hit.material==30||hit.material==31||hit.material==33)return;
         const PortalDisk& other=blue?weapons.orange:weapons.blue;
         if(other.active){
             const Vec3 d=hit.pos-other.pos;
@@ -443,7 +458,7 @@ struct App {
         yaw+=((weapons.ammoMag[wid]&1)?1.f:-1.f)*def.recoilYaw*(.7f+weapons.recoil*.5f);
         audio.playGunshot(wid==2);
 
-        const RayHit hit=sceneRaycast(zone,camera,aimDirection(true),weapons.destroyedMask,weapons.targetMask);
+        const RayHit hit=sceneRaycast(zone,camera,aimDirection(true),weapons.destroyedMask,weapons.targetMask,48.f,&puzzle);
         if(hit.hit){
             weapons.pushImpact(hit.pos-hit.normal*.03f);
             if(zone==9&&hit.material==5&&tryDestroyCover(weapons.destroyedMask,hit.pos))
@@ -458,7 +473,7 @@ struct App {
                     weapons.targetsDown=0;
                 }
                 uiDirty=true;
-            }else if(hit.material==5||hit.material==19||hit.material==13){
+            }else if(hit.material==5||hit.material==19||hit.material==13||hit.material==32||hit.material==33){
                 weapons.hitMarker=.55f;
             }
         }
@@ -623,9 +638,15 @@ struct App {
                 else gunLine+="  ·  "+std::to_string(weapons.ammoMag[wid])+" / "+std::to_string(weapons.ammoReserve[wid]);
                 if(zone==9)gunLine+="  ·  靶 "+std::to_string(weapons.targetsDown)+"/"+std::to_string(kPracticeTargetCount);
                 ui.text(gunLine,40,72,13,{.82,.78,.68,1},true);
-                ui.text("1 传送枪 · 2 USP · 3 AK  ·  滚轮切枪 ·  R 装填/清门 ·  F 重置沙盘 ·  Tab 换区",w*.5-340,h-38,12,{.72,.72,.67,.85});}
+                ui.text("1 传送枪 · 2 USP · 3 AK  ·  E 互动/拾取 ·  G 投掷 ·  F 重置沙盘 ·  Tab 换区",w*.5-330,h-38,12,{.72,.72,.67,.85});}
             if(nearSeal){ui.rect(w*.5-145,h*.62,290,46,{.02,.025,.02,.82});ui.outline(w*.5-145,h*.62,290,46,{.8,.35,.2,.7});ui.text("[ E ]  收录乡音印记",w*.5-92,h*.62+11,15,paper,true);}
             else if(nearPortal){ui.rect(w*.5-145,h*.62,290,46,{.02,.025,.02,.82});ui.outline(w*.5-145,h*.62,290,46,{.8,.35,.2,.7});ui.text("[ E ]  打开地域档案",w*.5-92,h*.62+11,15,paper,true);}
+            else if(puzzle.cubeHeld){ui.rect(w*.5-160,h*.62,320,46,{.02,.025,.02,.82});ui.outline(w*.5-160,h*.62,320,46,{.35,.65,.95,.7});ui.text("[ E ] 放下  ·  [ G ] 投掷方块",w*.5-118,h*.62+11,15,paper,true);}
+            else if(puzzle.nearCube){ui.rect(w*.5-145,h*.62,290,46,{.02,.025,.02,.82});ui.outline(w*.5-145,h*.62,290,46,{.9,.6,.2,.7});ui.text("[ E ]  拾起加权方块",w*.5-92,h*.62+11,15,paper,true);}
+            else if(puzzle.nearArmory&&!puzzle.armoryLooted){ui.rect(w*.5-145,h*.62,290,46,{.02,.025,.02,.82});ui.outline(w*.5-145,h*.62,290,46,{.2,.8,.4,.7});ui.text("[ E ]  领取军火补给",w*.5-92,h*.62+11,15,paper,true);}
+            if(zone==9&&showHud){
+                ui.text(puzzle.doorOpen?"军械库门：已开启":(puzzle.buttonOn?"地板按钮：按下":"地板按钮：把方块放到中路按钮上"),40,96,12,{.7,.72,.66,.9},true);
+            }
         }else if(screen==Screen::Home){
             ui.rect(0,0,w,h,{.015,.02,.017,.68});ui.rect(0,0,w*.52,h,{.02,.025,.021,.91});
             ui.rect(68,67,38,2,red);ui.text("ARCHIVE CN-∞  ·  实时光线追踪档案",119,55,11,muted,true);
@@ -691,6 +712,7 @@ struct App {
         yaw = pitch = 0.f;
         weapons.blue.active=false;weapons.orange.active=false;
         weapons.resetArena();
+        puzzle.reset();
         weapons.muzzle=0;weapons.recoil=0;weapons.hitMarker=0;weapons.sway=0;
         weapons.reloading=false;weapons.reloadLeft=0;weapons.cooldown=0;weapons.portalCooldown=0;
         moveVelocity={};currentSpread=0;
@@ -707,7 +729,104 @@ struct App {
         if(bitCount(collectedMask)==9)setScreen(Screen::Victory);
     }
 
-    void interact(){if(zone==0&&nearPortal){returnScreen=Screen::Playing;setScreen(Screen::Archive);}else collectSeal();}
+    void interact(){
+        if(zone==0&&nearPortal){returnScreen=Screen::Playing;setScreen(Screen::Archive);return;}
+        if(zone==9){
+            if(puzzle.cubeHeld){dropCube(false);return;}
+            if(puzzle.nearCube){pickUpCube();return;}
+            if(puzzle.nearArmory&&puzzle.doorOpen&&!puzzle.armoryLooted){
+                rewardAmmo();
+                puzzle.armoryLooted=true;
+                audio.playHit();
+                uiDirty=true;
+                return;
+            }
+        }
+        collectSeal();
+    }
+
+    void pickUpCube(){
+        puzzle.cubeHeld=true;
+        puzzle.cubeVel={};
+        puzzle.cubeGrounded=false;
+        uiDirty=true;
+    }
+
+    void dropCube(bool throwIt){
+        if(!puzzle.cubeHeld)return;
+        puzzle.cubeHeld=false;
+        const Vec3 forward=aimDirection(false);
+        puzzle.cubePos=camera+forward*1.15f+Vec3{0.f,-.35f,0.f};
+        if(throwIt){
+            puzzle.cubeVel=forward*9.5f+moveVelocity*0.35f+Vec3{0.f,2.2f,0.f};
+            puzzle.cubeGrounded=false;
+        }else{
+            puzzle.cubeVel={};
+        }
+        uiDirty=true;
+    }
+
+    void tryTeleportCube(){
+        if(puzzle.cubeHeld||!weapons.blue.active||!weapons.orange.active)return;
+        auto xformThrough=[&](const PortalDisk& from,const PortalDisk& to){
+            Vec3 up=std::abs(from.normal.y)>.92f?Vec3{1,0,0}:Vec3{0,1,0};
+            Vec3 fr=vnormalize(vcross(up,from.normal));
+            Vec3 fu=vcross(from.normal,fr);
+            up=std::abs(to.normal.y)>.92f?Vec3{1,0,0}:Vec3{0,1,0};
+            Vec3 tr=vnormalize(vcross(up,to.normal));
+            Vec3 tu=vcross(to.normal,tr);
+            tr=tr*-1.f;
+            auto xform=[&](Vec3 v){return tr*vdot(v,fr)+tu*vdot(v,fu)+to.normal*-vdot(v,from.normal);};
+            const Vec3 local=puzzle.cubePos-from.pos;
+            puzzle.cubePos=to.pos+xform(local)+to.normal*.7f;
+            puzzle.cubeVel=xform(puzzle.cubeVel);
+            puzzle.cubeGrounded=false;
+            audio.playPortal();
+        };
+        if(portalContains(weapons.blue,puzzle.cubePos))xformThrough(weapons.blue,weapons.orange);
+        else if(portalContains(weapons.orange,puzzle.cubePos))xformThrough(weapons.orange,weapons.blue);
+    }
+
+    void updatePuzzle(float dt){
+        if(zone!=9){puzzle.buttonOn=false;return;}
+        if(puzzle.cubeHeld){
+            const Vec3 forward=aimDirection(false);
+            puzzle.cubePos=camera+forward*1.2f+Vec3{0.f,-.4f,0.f};
+            puzzle.cubeVel={};
+            puzzle.cubeGrounded=false;
+        }else{
+            puzzle.cubeVel.y-=14.5f*dt;
+            puzzle.cubePos=puzzle.cubePos+puzzle.cubeVel*dt;
+            // Soft wall push so the cube stays in-bounds.
+            if(std::abs(puzzle.cubePos.x)>17.2f){puzzle.cubePos.x=std::clamp(puzzle.cubePos.x,-17.2f,17.2f);puzzle.cubeVel.x*=-.3f;}
+            if(puzzle.cubePos.z>23.f||puzzle.cubePos.z<-25.f){puzzle.cubePos.z=std::clamp(puzzle.cubePos.z,-25.f,23.f);puzzle.cubeVel.z*=-.3f;}
+            if(!puzzle.doorOpen&&insideBox(puzzle.cubePos.x,puzzle.cubePos.z,13.2f,-8.f,.35f,1.4f,.1f)){
+                puzzle.cubePos.x=12.7f;puzzle.cubeVel.x=std::min(puzzle.cubeVel.x,0.f);
+            }
+            const float floor=groundHeight(puzzle.cubePos.x,puzzle.cubePos.z)+.32f;
+            if(puzzle.cubePos.y<=floor&&puzzle.cubeVel.y<=0.f){
+                puzzle.cubePos.y=floor;
+                puzzle.cubeVel.y=0.f;
+                puzzle.cubeVel.x*=std::exp(-4.f*dt);
+                puzzle.cubeVel.z*=std::exp(-4.f*dt);
+                puzzle.cubeGrounded=true;
+            }else puzzle.cubeGrounded=false;
+            tryTeleportCube();
+        }
+
+        const bool playerOnBtn=insideCircle(camera.x,camera.z,0.f,5.4f,.85f)&&feetY<0.35f;
+        const bool cubeOnBtn=!puzzle.cubeHeld&&insideCircle(puzzle.cubePos.x,puzzle.cubePos.z,0.f,5.4f,.85f)&&puzzle.cubePos.y<0.9f;
+        const bool wasOn=puzzle.buttonOn;
+        puzzle.buttonOn=playerOnBtn||cubeOnBtn;
+        if(puzzle.buttonOn) puzzle.doorOpen=true;
+        if(puzzle.buttonOn!=wasOn) uiDirty=true;
+
+        const float cdx=camera.x-puzzle.cubePos.x,cdz=camera.z-puzzle.cubePos.z;
+        const bool nowCube=!puzzle.cubeHeld&&(cdx*cdx+cdz*cdz)<2.6f;
+        if(nowCube!=puzzle.nearCube){puzzle.nearCube=nowCube;uiDirty=true;}
+        const bool nowArmory=puzzle.doorOpen&&insideBox(camera.x,camera.z,15.0f,-8.f,1.2f,1.1f,.2f);
+        if(nowArmory!=puzzle.nearArmory){puzzle.nearArmory=nowArmory;uiDirty=true;}
+    }
 
     static float repeated(float value,float offset,float period){float q=std::fmod(value+offset,period);if(q<0)q+=period;return q-period*.5f;}
     static bool insideBox(float x,float z,float cx,float cz,float hx,float hz,float pad=.34f){return std::abs(x-cx)<hx+pad&&std::abs(z-cz)<hz+pad;}
@@ -773,6 +892,9 @@ struct App {
             if(insideBox(x,z,-3.5f,-20.5f,1.6f,.7f,.2f)||insideBox(x,z,-10.5f,-14.2f,1.4f,.65f,.2f))return true;
             if(!(weapons.destroyedMask&128u)&&insideBox(x,z,-1.2f,-18.5f,.7f,.55f))return true;
             if(!(weapons.destroyedMask&256u)&&insideBox(x,z,4.8f,-21.5f,.65f,.55f))return true;
+            // Puzzle door + armory shell
+            if(!puzzle.doorOpen&&insideBox(x,z,13.2f,-8.f,.25f,1.4f))return true;
+            if(insideBox(x,z,16.4f,-8.f,.25f,1.6f)||insideBox(x,z,14.8f,-6.4f,1.4f,.25f)||insideBox(x,z,14.8f,-9.6f,1.4f,.25f))return true;
             return false;
         }
         if(std::abs(x)>10.7f||z<-25.f||z>10.5f)return true;
@@ -836,7 +958,8 @@ struct App {
                     }else if(sc==SC_Q){weapons.selectPrevious();uiDirty=true;}
                     else if(sc==SC_E)interact();
                     else if(sc==SC_R)beginReload();
-                    else if(sc==SC_F){weapons.resetArena();uiDirty=true;}
+                    else if(sc==SC_F){weapons.resetArena();puzzle.reset();uiDirty=true;}
+                    else if(sc==SC_G&&puzzle.cubeHeld)dropCube(true);
                     else if(sc==SC_SPACE)jumpRequested=true;
                     else if(sc==SC_M){showHud=!showHud;settings.hud=showHud;saveSettings(settings);uiDirty=true;}
                     else if(sc==SC_1){weapons.select(WeaponId::PortalGun);uiDirty=true;}
@@ -942,6 +1065,7 @@ struct App {
         }
 
         tryPortalTeleport();
+        updatePuzzle(dt);
 
         playerMoving=std::hypot(camera.x-oldX,camera.z-oldZ)>.0001f;
         if(playerMoving){
@@ -1007,7 +1131,14 @@ struct App {
         gl.Uniform1f(uHitMarker, weapons.hitMarker);
         gl.Uniform1f(uSpread, currentSpread);
         gl.Uniform1f(uMoveSway, playerMoving ? (quietWalking ? .45f : 1.f) : .12f);
-        gl.ActiveTexture(GL_TEXTURE0);gl.BindTexture(GL_TEXTURE_2D,uiTexture);gl.Uniform1i(uUiTexture,0);
+        const float reloadT = weapons.reloading && weapons.current != WeaponId::PortalGun
+            ? (1.f - weapons.reloadLeft / std::max(.01f, kWeapons[static_cast<int>(weapons.current)].reloadTime))
+            : 0.f;
+        gl.Uniform1f(uReload, reloadT);
+        gl.Uniform3f(uCubePos, puzzle.cubePos.x, puzzle.cubePos.y, puzzle.cubePos.z);
+        gl.Uniform1i(uButtonOn, puzzle.buttonOn ? 1 : 0);
+        gl.Uniform1i(uDoorOpen, puzzle.doorOpen ? 1 : 0);
+        gl.Uniform1i(uCubeAlive, zone == 9 ? 1 : 0);
         gl.DrawArrays(GL_TRIANGLES, 0, 3);
 
         gl.BindFramebuffer(GL_READ_FRAMEBUFFER, sceneFbo);
@@ -1015,6 +1146,17 @@ struct App {
         gl.BlitFramebuffer(0, 0, sceneW, sceneH, 0, 0, drawableWidth, drawableHeight,
                            GL_COLOR_BUFFER_BIT, quality <= 0 ? GL_NEAREST : GL_LINEAR);
         gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // Full-resolution UI overlay keeps Chinese text sharp at low internal scale.
+        gl.Viewport(0, 0, drawableWidth, drawableHeight);
+        gl.Enable(GL_BLEND);
+        gl.BlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        gl.UseProgram(uiProgram);
+        gl.ActiveTexture(GL_TEXTURE0);
+        gl.BindTexture(GL_TEXTURE_2D, uiTexture);
+        gl.Uniform1i(uUiOverlayTex, 0);
+        gl.DrawArrays(GL_TRIANGLES, 0, 3);
+        gl.Disable(GL_BLEND);
         SDL_GL_SwapWindow(window);
     }
 
