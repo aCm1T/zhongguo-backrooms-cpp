@@ -65,6 +65,12 @@ public:
         sfxEnvelope_=std::clamp(hardness,.25f,1.f);
         sfxClock_=0.f;
     }
+    void playJumpPad(){
+        sfxKind_=11;
+        sfxEnvelope_=.85f;
+        sfxClock_=0.f;
+    }
+    void setLaserHum(bool on){laserHum_=on;}
 
     void update(int zone,bool moving,float footGain=1.f){
         if(!device_)return;
@@ -75,12 +81,16 @@ public:
         for(int i=0;i<frames;++i){
             phase_+=dt;float noise=randomSigned();noiseSmooth_=noiseSmooth_*.94f+noise*.06f;
             float s=.045f*std::sin(tau*50.f*phase_)+.012f*std::sin(tau*100.f*phase_);
-            if(zone==2||zone==8)s+=noise*.055f+noiseSmooth_*.045f; // monsoon / canal rain
+            if(zone==2||zone==8)s+=noise*.055f+noiseSmooth_*.045f;
             else if(zone==3)s+=.025f*std::sin(tau*121.f*phase_)*(1.f+.3f*std::sin(tau*.7f*phase_));
-            else if(zone==7)s+=noiseSmooth_*.13f+.018f*std::sin(tau*72.f*phase_); // winter wind
+            else if(zone==7)s+=noiseSmooth_*.13f+.018f*std::sin(tau*72.f*phase_);
             else if(zone==4)s+=.012f*std::sin(tau*220.f*phase_)+.007f*std::sin(tau*330.f*phase_);
             else if(zone==6)s+=.014f*std::sin(tau*82.f*phase_)+noiseSmooth_*.025f;
-            else if(zone==9)s+=noiseSmooth_*.09f+.016f*std::sin(tau*48.f*phase_)+.008f*std::sin(tau*190.f*phase_); // desert wind + metal
+            else if(zone==9)s+=noiseSmooth_*.09f+.016f*std::sin(tau*48.f*phase_)+.008f*std::sin(tau*190.f*phase_);
+            if(laserHum_){
+                s+=.012f*std::sin(tau*240.f*phase_)+.008f*std::sin(tau*480.f*phase_)
+                  +.006f*std::sin(tau*90.f*phase_)*(.6f+.4f*std::sin(tau*.7f*phase_));
+            }
             const float stepPeriod=.46f+(1.f-std::clamp(footGain,0.f,1.f))*.16f;
             if(moving){stepClock_+=dt;if(stepClock_>stepPeriod){stepClock_=0;stepEnvelope_=1.f;}}
             else stepClock_=std::min(stepClock_,.2f);
@@ -89,30 +99,32 @@ public:
             if(sfxEnvelope_>.001f){
                 sfxClock_+=dt;
                 float burst=0.f;
-                if(sfxKind_==1){ // USP
+                if(sfxKind_==1){
                     burst=(noise*.55f+.35f*std::sin(tau*920.f*sfxClock_))*std::exp(-sfxClock_*28.f);
-                }else if(sfxKind_==2){ // AK
+                }else if(sfxKind_==2){
                     burst=(noise*.7f+.25f*std::sin(tau*480.f*sfxClock_)+.15f*std::sin(tau*180.f*sfxClock_))*std::exp(-sfxClock_*18.f);
-                }else if(sfxKind_==3){ // portal
+                }else if(sfxKind_==3){
                     burst=.28f*std::sin(tau*(420.f+sfxClock_*900.f)*sfxClock_)*std::exp(-sfxClock_*6.f)
                          +.12f*std::sin(tau*180.f*sfxClock_);
-                }else if(sfxKind_==4){ // reload click
+                }else if(sfxKind_==4){
                     burst=.18f*noise*std::exp(-sfxClock_*14.f)+.08f*std::sin(tau*220.f*sfxClock_)*std::exp(-sfxClock_*8.f);
-                }else if(sfxKind_==5){ // target hit
+                }else if(sfxKind_==5){
                     burst=.22f*std::sin(tau*(760.f-sfxClock_*200.f)*sfxClock_)*std::exp(-sfxClock_*10.f);
-                }else if(sfxKind_==6){ // button
+                }else if(sfxKind_==6){
                     burst=.2f*std::sin(tau*(180.f+sfxClock_*40.f)*sfxClock_)*std::exp(-sfxClock_*7.f)
                         +.1f*noise*std::exp(-sfxClock_*12.f);
-                }else if(sfxKind_==7){ // door rumble
+                }else if(sfxKind_==7){
                     burst=.25f*std::sin(tau*(70.f+sfxClock_*30.f)*sfxClock_)*std::exp(-sfxClock_*4.5f)
                         +.12f*noiseSmooth_*std::exp(-sfxClock_*6.f);
-                }else if(sfxKind_==8){ // weapon swap click
+                }else if(sfxKind_==8){
                     burst=.14f*noise*std::exp(-sfxClock_*18.f)+.08f*std::sin(tau*320.f*sfxClock_)*std::exp(-sfxClock_*14.f);
-                }else if(sfxKind_==9){ // laser lock
+                }else if(sfxKind_==9){
                     burst=.18f*std::sin(tau*(640.f+sfxClock_*120.f)*sfxClock_)*std::exp(-sfxClock_*5.f)
                         +.1f*std::sin(tau*220.f*sfxClock_);
-                }else if(sfxKind_==10){ // hard land
+                }else if(sfxKind_==10){
                     burst=(noise*.4f+.15f*std::sin(tau*90.f*sfxClock_))*sfxEnvelope_*std::exp(-sfxClock_*14.f);
+                }else if(sfxKind_==11){ // jump pad
+                    burst=.2f*std::sin(tau*(140.f+sfxClock_*80.f)*sfxClock_)*std::exp(-sfxClock_*5.f);
                 }
                 s+=burst*sfxEnvelope_;
                 sfxEnvelope_*=sfxKind_==3?.991f:.986f;
@@ -128,4 +140,5 @@ private:
     SDL_AudioDeviceID device_{};SDL_AudioSpec obtained_{};std::vector<float> buffer_;
     std::uint32_t rng_{0x91e10da5u};float volume_{.65f},phase_{},noiseSmooth_{},stepClock_{},stepEnvelope_{};
     int sfxKind_{};float sfxEnvelope_{},sfxClock_{};
+    bool laserHum_{};
 };

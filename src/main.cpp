@@ -261,12 +261,15 @@ struct App {
     GLint uFovScale{}, uLaserSegs{}, uLaserPowered{};
     GLint uLaserA0{}, uLaserB0{}, uLaserA1{}, uLaserB1{}, uLaserA2{}, uLaserB2{};
     GLint uEmitterPos{}, uCatcherPos{}, uAmmoFrac{};
+    GLint uTracerA{}, uTracerB{}, uTracerLife{};
     GLint uUiOverlayTex{};
     bool previewOn{}, previewOk{}, previewBlue{true};
     Vec3 previewPos{}, previewN{0.f, 0.f, 1.f};
     float fovScale{1.25f};
     float fallPeakY{};
     bool trackingFall{};
+    float dustTipTimer{};
+    float jumpPadCooldown{};
 
     void initialize(QualityPreference qualityPreference) {
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0)
@@ -368,6 +371,9 @@ struct App {
         uEmitterPos=gl.GetUniformLocation(program,"uEmitterPos");
         uCatcherPos=gl.GetUniformLocation(program,"uCatcherPos");
         uAmmoFrac=gl.GetUniformLocation(program,"uAmmoFrac");
+        uTracerA=gl.GetUniformLocation(program,"uTracerA");
+        uTracerB=gl.GetUniformLocation(program,"uTracerB");
+        uTracerLife=gl.GetUniformLocation(program,"uTracerLife");
         gl.UseProgram(uiProgram);
         uUiOverlayTex=gl.GetUniformLocation(uiProgram,"uUiTexture");
         gl.Uniform1i(uUiOverlayTex,0);
@@ -492,8 +498,10 @@ struct App {
         audio.playGunshot(wid==2);
 
         const RayHit hit=sceneRaycast(zone,camera,aimDirection(true),weapons.destroyedMask,weapons.targetMask,48.f,&puzzle);
+        const Vec3 muzzle=camera+aimDirection(false)*.45f+Vec3{0.f,-.08f,0.f};
         if(hit.hit){
             weapons.pushImpact(hit.pos-hit.normal*.03f);
+            weapons.pushTracer(muzzle,hit.pos);
             if(zone==9&&hit.material==5&&tryDestroyCover(weapons.destroyedMask,hit.pos))
                 uiDirty=true;
             if(zone==9&&hit.material==27&&tryHitTarget(weapons.targetMask,hit.pos)){
@@ -509,6 +517,8 @@ struct App {
             }else if(hit.material==5||hit.material==19||hit.material==13||hit.material==32||hit.material==33){
                 weapons.hitMarker=.55f;
             }
+        }else{
+            weapons.pushTracer(muzzle,muzzle+aimDirection(true)*40.f);
         }
         uiDirty=true;
     }
@@ -680,8 +690,13 @@ struct App {
             if(zone==9&&showHud){
                 std::string tip=puzzle.doorOpenT>.95f?"军械库门：已开启":(puzzle.doorOpen?"军械库门：开启中…":(puzzle.buttonOn?"地板按钮：按下":"地板按钮：把方块放到中路按钮上"));
                 tip+="  ·  激光：";
-                tip+=puzzle.laserPowered?"已接通（坑桥升起）":"用传送门把红光接到对侧接收器";
+                tip+=puzzle.laserPowered?"已接通（坑桥+弹跳板）":"用传送门折射红光；方块可挡住激光";
                 ui.text(tip,40,96,12,{.7,.72,.66,.9},true);
+                if(dustTipTimer>0.f){
+                    ui.rect(w*.5-310,78,620,52,{.02,.03,.025,.86});
+                    ui.outline(w*.5-310,78,620,52,{.95,.55,.2,.55});
+                    ui.text("Dust II 沙盘：传送门折射激光 · 方块压按钮开军械库 · 靶场练枪",w*.5-268,94,14,paper,true);
+                }
             }
         }else if(screen==Screen::Home){
             ui.rect(0,0,w,h,{.015,.02,.017,.68});ui.rect(0,0,w*.52,h,{.02,.025,.021,.91});
@@ -749,9 +764,12 @@ struct App {
         weapons.blue.active=false;weapons.orange.active=false;
         weapons.resetArena();
         puzzle.reset();
+        audio.setLaserHum(false);
         weapons.muzzle=0;weapons.recoil=0;weapons.hitMarker=0;weapons.sway=0;
         weapons.reloading=false;weapons.reloadLeft=0;weapons.cooldown=0;weapons.portalCooldown=0;
-        moveVelocity={};currentSpread=0;
+        moveVelocity={};currentSpread=0;trackingFall=false;jumpPadCooldown=0;
+        if(zone==9)dustTipTimer=12.f;
+        else dustTipTimer=0.f;
         saved.zone=zone;if(screen==Screen::Playing)saveProgress({collectedMask,zone});uiDirty=true;updateTitle(0);
     }
 
@@ -870,6 +888,7 @@ struct App {
         if(nowArmory!=puzzle.nearArmory){puzzle.nearArmory=nowArmory;uiDirty=true;}
 
         updateLaser();
+        audio.setLaserHum(puzzle.laserPowered);
         if(puzzle.laserPowered&&!puzzle.laserWasPowered){audio.playLaser();uiDirty=true;}
         puzzle.laserWasPowered=puzzle.laserPowered;
     }
@@ -888,6 +907,17 @@ struct App {
             const Vec3 p=origin+dir*t;
             if(!portalContains(portal,p))return -1.f;
             return t;
+        };
+
+        // Weighted cube always occludes the beam (held or free) — Portal-style block.
+        auto cubeHitT=[&](Vec3 origin,Vec3 dir)->float{
+            const Vec3 oc=origin-puzzle.cubePos;
+            const float b=vdot(oc,dir);
+            const float c=vdot(oc,oc)-.42f*.42f;
+            const float disc=b*b-c;
+            if(disc<0.f)return -1.f;
+            const float t=-b-std::sqrt(disc);
+            return t>.08f?t:-1.f;
         };
 
         Vec3 origin=PuzzleState::kEmitterPos+PuzzleState::kEmitterDir*.35f;
@@ -909,6 +939,15 @@ struct App {
 
             RayHit hit=sceneRaycast(zone,origin,dir,weapons.destroyedMask,weapons.targetMask,36.f,&puzzle);
             float worldT=hit.hit?hit.t:36.f;
+            const float cubeT=cubeHitT(origin,dir);
+            bool blockedByCube=false;
+            if(cubeT>0.f&&cubeT<worldT){
+                worldT=cubeT;
+                blockedByCube=true;
+                hit.hit=true;
+                hit.t=cubeT;
+                hit.pos=origin+dir*cubeT;
+            }
             const float blueT=portalHitT(weapons.blue,origin,dir);
             const float orangeT=portalHitT(weapons.orange,origin,dir);
 
@@ -959,7 +998,7 @@ struct App {
 
             if(puzzle.laserSegs<3){
                 puzzle.laserA[puzzle.laserSegs]=origin;
-                puzzle.laserB[puzzle.laserSegs]=hit.pos;
+                puzzle.laserB[puzzle.laserSegs]=blockedByCube?origin+dir*worldT:hit.pos;
                 ++puzzle.laserSegs;
             }
             return;
@@ -1151,6 +1190,13 @@ struct App {
         weapons.denyFlash=std::max(0.f,weapons.denyFlash-dt*3.8f);
         weapons.viewPunch=std::max(0.f,weapons.viewPunch-dt*5.5f);
         for(float& life:weapons.impactLife) life=std::max(0.f,life-dt*1.6f);
+        weapons.tracerLife=std::max(0.f,weapons.tracerLife-dt*3.2f);
+        if(jumpPadCooldown>0.f) jumpPadCooldown=std::max(0.f,jumpPadCooldown-dt);
+        if(dustTipTimer>0.f){
+            const float prev=dustTipTimer;
+            dustTipTimer=std::max(0.f,dustTipTimer-dt);
+            if(prev>0.f&&dustTipTimer<=0.f) uiDirty=true;
+        }
         if(weapons.reloading){
             weapons.reloadLeft-=dt;
             if(weapons.reloadLeft<=0.f)finishReload();
@@ -1235,6 +1281,19 @@ struct App {
         tryPortalTeleport();
         updatePuzzle(dt);
         updatePortalPreview();
+
+        // Faith plate on the laser bridge (Long A pit center).
+        if(zone==9&&puzzle.laserPowered&&jumpPadCooldown<=0.f){
+            const float dx=camera.x-10.9f,dz=camera.z+11.5f;
+            if(dx*dx+dz*dz<.55f*.55f&&feetY<0.55f&&verticalVelocity<=1.2f){
+                verticalVelocity=std::max(verticalVelocity,12.5f);
+                moveVelocity.z-=2.4f;
+                grounded=false;
+                jumpPadCooldown=.9f;
+                audio.playJumpPad();
+                weapons.viewPunch=std::min(1.f,weapons.viewPunch+.25f);
+            }
+        }
 
         playerMoving=std::hypot(camera.x-oldX,camera.z-oldZ)>.0001f;
         if(playerMoving){
@@ -1361,6 +1420,9 @@ struct App {
         gl.Uniform3f(uLaserB2, puzzle.laserB[2].x, puzzle.laserB[2].y, puzzle.laserB[2].z);
         gl.Uniform3f(uEmitterPos, PuzzleState::kEmitterPos.x, PuzzleState::kEmitterPos.y, PuzzleState::kEmitterPos.z);
         gl.Uniform3f(uCatcherPos, PuzzleState::kCatcherPos.x, PuzzleState::kCatcherPos.y, PuzzleState::kCatcherPos.z);
+        gl.Uniform3f(uTracerA, weapons.tracerA.x, weapons.tracerA.y, weapons.tracerA.z);
+        gl.Uniform3f(uTracerB, weapons.tracerB.x, weapons.tracerB.y, weapons.tracerB.z);
+        gl.Uniform1f(uTracerLife, weapons.tracerLife);
         const int wid = static_cast<int>(weapons.current);
         const float ammoFrac = (wid > 0 && kWeapons[wid].magSize > 0)
             ? static_cast<float>(weapons.ammoMag[wid]) / static_cast<float>(kWeapons[wid].magSize) : 0.f;

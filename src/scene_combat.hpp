@@ -350,6 +350,9 @@ struct WeaponLoadout {
     Vec3 impactPos[3]{};
     float impactLife[3]{};
     int impactCursor{};
+    Vec3 tracerA{};
+    Vec3 tracerB{};
+    float tracerLife{};
     std::uint32_t destroyedMask{};
     std::uint32_t targetMask{};
     int targetsDown{};
@@ -378,11 +381,17 @@ struct WeaponLoadout {
         impactLife[impactCursor] = 1.f;
         impactCursor = (impactCursor + 1) % 3;
     }
+    void pushTracer(Vec3 from, Vec3 to) {
+        tracerA = from;
+        tracerB = to;
+        tracerLife = 1.f;
+    }
     void resetArena() {
         destroyedMask = 0;
         targetMask = 0;
         targetsDown = 0;
         clearPortals();
+        tracerLife = 0.f;
         for (float& life : impactLife) life = 0.f;
     }
 };

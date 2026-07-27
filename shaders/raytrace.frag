@@ -57,6 +57,9 @@ uniform vec3 uLaserB2;
 uniform vec3 uEmitterPos;
 uniform vec3 uCatcherPos;
 uniform float uAmmoFrac;
+uniform vec3 uTracerA;
+uniform vec3 uTracerB;
+uniform float uTracerLife;
 
 #define MAX_STEPS 92
 #define MAX_DIST 70.0
@@ -373,9 +376,10 @@ vec2 mapDust2(vec3 p) {
     r = take(r, sdBox(p - uCatcherPos, vec3(0.22, 0.28, 0.18)), uLaserPowered != 0 ? 40.0 : 39.0);
     r = take(r, sdSphere(p - (uCatcherPos + vec3(-0.15, 0.0, 0.0)), 0.12), uLaserPowered != 0 ? 40.0 : 39.0);
 
-    // Laser-powered bridge over Long A pit
+    // Laser-powered bridge over Long A pit + faith plate disc
     if (uLaserPowered != 0) {
         r = take(r, sdBox(p - vec3(10.9, 0.08, -11.5), vec3(2.15, 0.08, 1.45)), 41.0);
+        r = take(r, sdCylinder(p - vec3(10.9, 0.14, -11.5), 0.55, 0.06), 42.0);
     }
 
     if (uCubeAlive != 0) {
@@ -433,6 +437,7 @@ vec2 mapPortals(vec3 p, vec2 r) {
     if (uLaserSegs > 0) r = take(r, sdCapsule(p, uLaserA0, uLaserB0, 0.035), 37.0);
     if (uLaserSegs > 1) r = take(r, sdCapsule(p, uLaserA1, uLaserB1, 0.035), 37.0);
     if (uLaserSegs > 2) r = take(r, sdCapsule(p, uLaserA2, uLaserB2, 0.035), 37.0);
+    if (uTracerLife > .02) r = take(r, sdCapsule(p, uTracerA, uTracerB, 0.012 + 0.01 * uTracerLife), 43.0);
     if (uImpactLife > .01) r = take(r, sdSphere(p - uImpactPos, .06 + .04 * (1.0 - uImpactLife)), 26.0);
     if (uImpactLife1 > .01) r = take(r, sdSphere(p - uImpactPos1, .05 + .04 * (1.0 - uImpactLife1)), 26.0);
     if (uImpactLife2 > .01) r = take(r, sdSphere(p - uImpactPos2, .05 + .04 * (1.0 - uImpactLife2)), 26.0);
@@ -561,6 +566,8 @@ vec3 palette(float id, vec3 p) {
     else if (id < 39.5) c = vec3(.35,.12,.12);      // catcher off
     else if (id < 40.5) c = vec3(1.0,.35,.12);      // catcher on
     else if (id < 41.5) c = vec3(.45,.72,.85);      // laser bridge
+    else if (id < 42.5) c = vec3(.95,.55,.18);      // jump pad
+    else if (id < 43.5) c = vec3(1.0,.85,.45);      // tracer
     else c = vec3(.65,.86,.95);
     if (id == 3.0 && uZone == 1) {
         float brick = step(.92, fract(p.y * 2.4)) + step(.94, fract((p.z + floor(p.y*2.4)*.3)*1.2));
@@ -621,10 +628,13 @@ vec3 shadeSurface(vec3 ro, vec3 rd, vec2 hit, bool secondary) {
                    + step(35.5, hit.y) * step(hit.y, 36.5) * (0.6 + 0.4 * abs(sin(uTime * 10.0)))
                    + step(36.5, hit.y) * step(hit.y, 37.5) * 3.2
                    + step(39.5, hit.y) * step(hit.y, 40.5) * 2.4
-                   + step(40.5, hit.y) * step(hit.y, 41.5) * (.4 + .3 * abs(sin(uTime * 2.5)));
+                   + step(40.5, hit.y) * step(hit.y, 41.5) * (.4 + .3 * abs(sin(uTime * 2.5)))
+                   + step(41.5, hit.y) * step(hit.y, 42.5) * (1.2 + .8 * abs(sin(uTime * 6.0)))
+                   + step(42.5, hit.y) * step(hit.y, 43.5) * uTracerLife * 2.8;
     col += base * emissive * (hit.y < 21.5 ? 2.4 : (hit.y < 23.5 ? 1.25 : 1.6));
     if (hit.y > 33.5 && hit.y < 36.5) col *= 0.55; // ghost preview translucency feel
     if (hit.y > 36.5 && hit.y < 37.5) col += vec3(1.0, .25, .1) * .35;
+    if (hit.y > 42.5 && hit.y < 43.5) col += vec3(1.0, .8, .3) * uTracerLife;
     if (hit.y > 32.5 && hit.y < 33.5) {
         // Heart stamp on the weighted cube.
         float hx = abs(mod(p.x + p.z, 0.64) - 0.32);
