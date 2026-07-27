@@ -359,12 +359,6 @@ vec2 mapDust2(vec3 p) {
         r = take(r, sdRoundBox(p - uCubePos, vec3(0.32, 0.32, 0.32), 0.04), 33.0);
     }
 
-    // Ghost portal placement preview
-    if (uPreviewOn != 0) {
-        float ghost = portalDisk(p, uPreviewPos, normalize(uPreviewN));
-        r = take(r, ghost, uPreviewOk != 0 ? (uPreviewBlue != 0 ? 34.0 : 35.0) : 36.0);
-    }
-
     // Practice range targets
     if (targetAlive(0)) r = take(r, targetProp(p, vec3(0.0, 1.15, 4.2)), 27.0);
     if (targetAlive(1)) r = take(r, targetProp(p, vec3(11.0, 1.15, -8.0)), 27.0);
@@ -402,6 +396,10 @@ vec2 mapPortals(vec3 p, vec2 r) {
     }
     if (uPortalOrangeOn != 0) {
         r = take(r, portalDisk(p, uPortalOrangePos, normalize(uPortalOrangeN)), 25.0);
+    }
+    if (uPreviewOn != 0) {
+        float ghost = portalDisk(p, uPreviewPos, normalize(uPreviewN));
+        r = take(r, ghost, uPreviewOk != 0 ? (uPreviewBlue != 0 ? 34.0 : 35.0) : 36.0);
     }
     if (uImpactLife > .01) r = take(r, sdSphere(p - uImpactPos, .06 + .04 * (1.0 - uImpactLife)), 26.0);
     if (uImpactLife1 > .01) r = take(r, sdSphere(p - uImpactPos1, .05 + .04 * (1.0 - uImpactLife1)), 26.0);
