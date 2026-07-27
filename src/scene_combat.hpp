@@ -206,6 +206,10 @@ inline float sceneDistance(int zone, Vec3 p, std::uint32_t destroyedMask, std::u
             take(sdBox(p - Vec3{16.4f, 2.f, -8.f}, {.25f, 2.f, 1.6f}), 19);
             take(sdBox(p - Vec3{14.8f, 2.f, -6.4f}, {1.4f, 2.f, .25f}), 19);
             take(sdBox(p - Vec3{14.8f, 2.f, -9.6f}, {1.4f, 2.f, .25f}), 19);
+            if (puzzle->laserPowered) {
+                take(sdBox(p - Vec3{10.9f, .08f, -11.5f}, {2.15f, .08f, 1.45f}), 41);
+                take(sdCylinderY(p - Vec3{10.9f, .14f, -11.5f}, .55f, .06f), 42);
+            }
             if (!puzzle->cubeHeld)
                 take(sdRoundBox(p - puzzle->cubePos, {.32f, .32f, .32f}, .04f), 33);
         }

@@ -453,7 +453,8 @@ struct App {
         const RayHit hit=sceneRaycast(zone,camera,aimDirection(false),weapons.destroyedMask,weapons.targetMask,48.f,&puzzle);
         auto deny=[&](){weapons.denyFlash=1.f;weapons.cooldown=.12f;};
         if(!hit.hit||hit.t>42.f){deny();return;}
-        if(hit.material==27||hit.material==28||hit.material==29||hit.material==30||hit.material==31||hit.material==33){deny();return;}
+        if(hit.material==27||hit.material==28||hit.material==29||hit.material==30||hit.material==31||hit.material==33
+           ||hit.material==37||hit.material==39||hit.material==40||hit.material==41||hit.material==42){deny();return;}
         // Prefer walls/structures over shallow floor placements for readable portals.
         if(std::abs(hit.normal.y)>.82f&&hit.material==1){deny();return;}
         const PortalDisk& other=blue?weapons.orange:weapons.blue;
@@ -691,7 +692,8 @@ struct App {
                 std::string tip=puzzle.doorOpenT>.95f?"军械库门：已开启":(puzzle.doorOpen?"军械库门：开启中…":(puzzle.buttonOn?"地板按钮：按下":"地板按钮：把方块放到中路按钮上"));
                 tip+="  ·  激光：";
                 tip+=puzzle.laserPowered?"已接通（坑桥+弹跳板）":"用传送门折射红光；方块可挡住激光";
-                ui.text(tip,40,96,12,{.7,.72,.66,.9},true);
+                const double tipY=dustTipTimer>0.f?138.0:96.0;
+                ui.text(tip,40,tipY,12,{.7,.72,.66,.9},true);
                 if(dustTipTimer>0.f){
                     ui.rect(w*.5-310,78,620,52,{.02,.03,.025,.86});
                     ui.outline(w*.5-310,78,620,52,{.95,.55,.2,.55});
@@ -889,7 +891,10 @@ struct App {
 
         updateLaser();
         audio.setLaserHum(puzzle.laserPowered);
-        if(puzzle.laserPowered&&!puzzle.laserWasPowered){audio.playLaser();uiDirty=true;}
+        if(puzzle.laserPowered!=puzzle.laserWasPowered){
+            if(puzzle.laserPowered) audio.playLaser();
+            uiDirty=true;
+        }
         puzzle.laserWasPowered=puzzle.laserPowered;
     }
 
@@ -1017,6 +1022,7 @@ struct App {
         previewPos=hit.pos+vnormalize(hit.normal)*.05f;
         previewN=vnormalize(hit.normal);
         previewOk=!(hit.material==27||hit.material==28||hit.material==29||hit.material==30||hit.material==31||hit.material==33
+                    ||hit.material==37||hit.material==39||hit.material==40||hit.material==41||hit.material==42
                     ||(std::abs(hit.normal.y)>.82f&&hit.material==1));
         if(previewOk){
             const PortalDisk& other=previewBlue?weapons.orange:weapons.blue;
