@@ -31,12 +31,19 @@ constexpr GLenum GL_TEXTURE_WRAP_S = 0x2802;
 constexpr GLenum GL_TEXTURE_WRAP_T = 0x2803;
 constexpr GLenum GL_CLAMP_TO_EDGE = 0x812F;
 constexpr GLenum GL_LINEAR = 0x2601;
+constexpr GLenum GL_NEAREST = 0x2600;
 constexpr GLenum GL_RGBA8 = 0x8058;
+constexpr GLenum GL_RGBA = 0x1908;
 constexpr GLenum GL_BGRA = 0x80E1;
 constexpr GLenum GL_UNSIGNED_BYTE = 0x1401;
 constexpr GLenum GL_UNPACK_ALIGNMENT = 0x0CF5;
 constexpr GLenum GL_VENDOR = 0x1F00;
 constexpr GLenum GL_RENDERER = 0x1F01;
+constexpr GLenum GL_FRAMEBUFFER = 0x8D40;
+constexpr GLenum GL_READ_FRAMEBUFFER = 0x8CA8;
+constexpr GLenum GL_DRAW_FRAMEBUFFER = 0x8CA9;
+constexpr GLenum GL_COLOR_ATTACHMENT0 = 0x8CE0;
+constexpr GLenum GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
 constexpr GLboolean GL_FALSE = 0;
 
 struct GLApi {
@@ -54,6 +61,12 @@ struct GLApi {
     void (*TexParameteri)(GLenum,GLenum,GLint){};
     void (*TexImage2D)(GLenum,GLint,GLint,GLsizei,GLsizei,GLint,GLenum,GLenum,const void*){};
     void (*PixelStorei)(GLenum,GLint){};
+    void (*GenFramebuffers)(GLsizei,GLuint*){};
+    void (*DeleteFramebuffers)(GLsizei,const GLuint*){};
+    void (*BindFramebuffer)(GLenum,GLuint){};
+    void (*FramebufferTexture2D)(GLenum,GLenum,GLenum,GLuint,GLint){};
+    GLenum (*CheckFramebufferStatus)(GLenum){};
+    void (*BlitFramebuffer)(GLint,GLint,GLint,GLint,GLint,GLint,GLint,GLint,GLbitfield,GLenum){};
     GLuint (*CreateShader)(GLenum){};
     void (*ShaderSource)(GLuint,GLsizei,const GLchar* const*,const GLint*){};
     void (*CompileShader)(GLuint){};
@@ -86,12 +99,13 @@ struct GLApi {
         LOAD(Viewport); LOAD(ClearColor); LOAD(Clear); LOAD(GetString); LOAD(GenVertexArrays);
         LOAD(BindVertexArray); LOAD(DeleteVertexArrays); LOAD(GenTextures); LOAD(DeleteTextures);
         LOAD(BindTexture); LOAD(ActiveTexture); LOAD(TexParameteri); LOAD(TexImage2D);
-        LOAD(PixelStorei); LOAD(CreateShader);
-        LOAD(ShaderSource); LOAD(CompileShader); LOAD(GetShaderiv); LOAD(GetShaderInfoLog);
-        LOAD(DeleteShader); LOAD(CreateProgram); LOAD(AttachShader); LOAD(LinkProgram);
-        LOAD(GetProgramiv); LOAD(GetProgramInfoLog); LOAD(DeleteProgram); LOAD(UseProgram);
-        LOAD(GetUniformLocation); LOAD(Uniform1f); LOAD(Uniform1i); LOAD(Uniform2f);
-        LOAD(Uniform3f); LOAD(Uniform4f); LOAD(DrawArrays);
+        LOAD(PixelStorei); LOAD(GenFramebuffers); LOAD(DeleteFramebuffers); LOAD(BindFramebuffer);
+        LOAD(FramebufferTexture2D); LOAD(CheckFramebufferStatus); LOAD(BlitFramebuffer);
+        LOAD(CreateShader); LOAD(ShaderSource); LOAD(CompileShader); LOAD(GetShaderiv);
+        LOAD(GetShaderInfoLog); LOAD(DeleteShader); LOAD(CreateProgram); LOAD(AttachShader);
+        LOAD(LinkProgram); LOAD(GetProgramiv); LOAD(GetProgramInfoLog); LOAD(DeleteProgram);
+        LOAD(UseProgram); LOAD(GetUniformLocation); LOAD(Uniform1f); LOAD(Uniform1i);
+        LOAD(Uniform2f); LOAD(Uniform3f); LOAD(Uniform4f); LOAD(DrawArrays);
 #undef LOAD
     }
 };

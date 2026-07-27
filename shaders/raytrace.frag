@@ -24,7 +24,15 @@ uniform vec3 uPortalOrangePos;
 uniform vec3 uPortalOrangeN;
 uniform vec3 uImpactPos;
 uniform float uImpactLife;
+uniform vec3 uImpactPos1;
+uniform float uImpactLife1;
+uniform vec3 uImpactPos2;
+uniform float uImpactLife2;
 uniform int uDestroyedMask;
+uniform int uTargetMask;
+uniform float uHitMarker;
+uniform float uSpread;
+uniform float uMoveSway;
 
 #define MAX_STEPS 92
 #define MAX_DIST 70.0
@@ -198,9 +206,20 @@ vec2 mapLingnan(vec3 p, vec2 r) {
 }
 
 bool coverAlive(int bit) { return (uDestroyedMask & (1 << bit)) == 0; }
+bool targetAlive(int bit) { return (uTargetMask & (1 << bit)) == 0; }
+
+float targetProp(vec3 p, vec3 c) {
+    float stand = sdCylinder(p - (c + vec3(0.0, -.55, 0.0)), .05, .55);
+    float head = sdCylinder(p - c, .28, .32);
+    return min(stand, head);
+}
 
 // Compressed Dust II: T spawn south, A north-east, B north-west, mid doors center.
 vec2 mapDust2(vec3 p) {
+    // Cheap exterior bound — most sky/background rays skip the full layout.
+    float bound = sdBox(p - vec3(0.0, 3.0, -1.0), vec3(20.0, 9.0, 28.0));
+    if (bound > 1.6) return vec2(bound, 1.0);
+
     vec2 r = vec2(p.y, 1.0); // desert floor
     // Outer cliff walls keep the player in-bounds without a corridor ceiling.
     r = take(r, sdBox(p - vec3(0.0, 4.0, 24.5), vec3(22.0, 5.0, .6)), 19.0);
@@ -215,28 +234,25 @@ vec2 mapDust2(vec3 p) {
     if (coverAlive(0)) r = take(r, sdBox(p - vec3(-3.4, .55, 13.2), vec3(.7, .55, .55)), 5.0);
     if (coverAlive(1)) r = take(r, sdBox(p - vec3( 3.2, .55, 13.4), vec3(.6, .55, .5)), 5.0);
 
-    // Mid doors corridor: twin adobe walls with walkable gaps to Long A / B tunnels
+    // Mid doors corridor
     r = take(r, sdBox(p - vec3(-3.6, 2.0, 6.5), vec3(.35, 2.0, 3.0)), 19.0);
     r = take(r, sdBox(p - vec3( 3.6, 2.0, 6.5), vec3(.35, 2.0, 3.0)), 19.0);
     r = take(r, sdBox(p - vec3(-3.6, 2.0, 1.2), vec3(.35, 2.0, 1.4)), 19.0);
     r = take(r, sdBox(p - vec3( 3.6, 2.0, 1.2), vec3(.35, 2.0, 1.4)), 19.0);
-    // gap around z=3.5 (to upper tunnels west) and z=-1.5 (to short/long A east)
     r = take(r, sdBox(p - vec3(-3.6, 2.0, -3.6), vec3(.35, 2.0, 1.2)), 19.0);
     r = take(r, sdBox(p - vec3( 3.6, 2.0, -3.6), vec3(.35, 2.0, 1.2)), 19.0);
-    // Mid door frames (open center)
     r = take(r, sdBox(p - vec3(-1.55, 1.8, .6), vec3(.18, 1.8, .12)), 17.0);
     r = take(r, sdBox(p - vec3( 1.55, 1.8, .6), vec3(.18, 1.8, .12)), 17.0);
     r = take(r, sdBox(p - vec3(0.0, 3.55, .6), vec3(1.75, .18, .12)), 17.0);
     if (coverAlive(2)) r = take(r, sdBox(p - vec3(-1.1, .45, 2.2), vec3(.55, .45, .45)), 5.0);
     if (coverAlive(3)) r = take(r, sdBox(p - vec3( 1.2, .45, -1.0), vec3(.5, .45, .5)), 5.0);
 
-    // CT mid ramp / steps toward short A
     for (int i = 0; i < 5; ++i) {
         float fi = float(i);
         float h = .18 + fi * .28;
         r = take(r, sdBox(p - vec3(1.2, h, -5.0 - fi * .55), vec3(2.4, h, .32)), 5.0);
     }
-    r = take(r, sdBox(p - vec3(4.8, 1.55, -8.2), vec3(1.1, .18, 2.2)), 5.0); // cat approach deck
+    r = take(r, sdBox(p - vec3(4.8, 1.55, -8.2), vec3(1.1, .18, 2.2)), 5.0);
 
     // Long A corridor (east)
     r = take(r, sdBox(p - vec3(8.2, 2.2, -2.0), vec3(.35, 2.2, 8.5)), 19.0);
@@ -247,29 +263,29 @@ vec2 mapDust2(vec3 p) {
     if (coverAlive(5)) r = take(r, sdBox(p - vec3(11.2, .5, -10.0), vec3(.6, .5, .5)), 5.0);
     if (coverAlive(6)) r = take(r, sdBox(p - vec3(9.8, .5, -14.5), vec3(.55, .5, .55)), 5.0);
 
-    // Short A / catwalk boxes
+    // Short A / catwalk / Xbox
     r = take(r, sdBox(p - vec3(5.5, .65, -12.0), vec3(.9, .65, .9)), 5.0);
     r = take(r, sdBox(p - vec3(5.5, 1.55, -12.0), vec3(.55, .35, .55)), 5.0);
     r = take(r, sdBox(p - vec3(7.2, 1.15, -14.5), vec3(1.0, .18, 1.6)), 5.0);
     r = take(r, sdBox(p - vec3(6.4, .55, -16.2), vec3(.7, .55, .7)), 5.0);
+    r = take(r, sdBox(p - vec3(-0.2, .55, -17.8), vec3(.85, .55, .55)), 5.0); // goose
 
     // A site platform + CT-side cover
     r = take(r, sdBox(p - vec3(2.0, .12, -20.0), vec3(4.5, .12, 3.2)), 5.0);
     if (coverAlive(7)) r = take(r, sdBox(p - vec3(-1.2, .7, -18.5), vec3(.7, .7, .55)), 5.0);
     if (coverAlive(8)) r = take(r, sdBox(p - vec3(4.8, .7, -21.5), vec3(.65, .7, .55)), 5.0);
     r = take(r, sdBox(p - vec3(0.0, 1.6, -23.5), vec3(5.5, 1.6, .3)), 19.0);
-    r = take(r, sdRoundBox(p - vec3(-3.5, .85, -20.5), vec3(1.6, .55, .7), .08), 13.0); // car
+    r = take(r, sdRoundBox(p - vec3(-3.5, .85, -20.5), vec3(1.6, .55, .7), .08), 13.0);
+    r = take(r, sdCylinder(p - vec3(2.0, .05, -20.0), 1.1, .05), 28.0); // A bomb pad
 
-    // Upper tunnels into B (west of mid) — openings at mid connect and B site exit
+    // Upper tunnels into B
     r = take(r, sdBox(p - vec3(-7.5, 2.0, 8.0), vec3(.35, 2.0, 3.0)), 19.0);
     r = take(r, sdBox(p - vec3(-7.5, 2.0, 1.5), vec3(.35, 2.0, 2.0)), 19.0);
-    // gap near z=4.5 from mid into tunnels
     r = take(r, sdBox(p - vec3(-12.5, 2.0, 2.0), vec3(.35, 2.0, 9.0)), 19.0);
     r = take(r, sdBox(p - vec3(-10.0, 2.0, 10.8), vec3(2.8, 2.0, .35)), 19.0);
-    r = take(r, sdBox(p - vec3(-10.0, 3.55, 2.0), vec3(2.8, .2, 9.0)), 19.0); // tunnel roof
+    r = take(r, sdBox(p - vec3(-10.0, 3.55, 2.0), vec3(2.8, .2, 9.0)), 19.0);
     r = take(r, sdBox(p - vec3(-11.6, 2.0, -7.2), vec3(1.2, 2.0, .35)), 19.0);
     r = take(r, sdBox(p - vec3(-8.4, 2.0, -7.2), vec3(1.2, 2.0, .35)), 19.0);
-    // center gap ~x=-10 for B exit
     if (coverAlive(9)) r = take(r, sdBox(p - vec3(-8.5, .5, 4.0), vec3(.5, .5, .5)), 5.0);
 
     // B site
@@ -279,15 +295,22 @@ vec2 mapDust2(vec3 p) {
     r = take(r, sdBox(p - vec3(-8.0, 1.4, -19.2), vec3(4.0, 1.4, .3)), 19.0);
     if (coverAlive(10)) r = take(r, sdBox(p - vec3(-6.2, .55, -14.0), vec3(.7, .55, .55)), 5.0);
     if (coverAlive(11)) r = take(r, sdBox(p - vec3(-9.5, .55, -16.8), vec3(.65, .55, .6)), 5.0);
-    r = take(r, sdRoundBox(p - vec3(-10.5, .8, -14.2), vec3(1.4, .5, .65), .07), 13.0); // window car
+    r = take(r, sdRoundBox(p - vec3(-10.5, .8, -14.2), vec3(1.4, .5, .65), .07), 13.0);
+    r = take(r, sdCylinder(p - vec3(-8.0, .05, -15.5), 1.0, .05), 29.0); // B bomb pad
 
-    // CT spawn building stub near A (north-east)
+    // CT spawn building stub near A
     r = take(r, sdBox(p - vec3(14.0, 2.0, -21.0), vec3(2.5, 2.0, 2.0)), 19.0);
     r = take(r, sdBox(p - vec3(12.2, 1.1, -18.8), vec3(.2, 1.1, 1.2)), 19.0);
 
-    // Scaffold / scaffolding accents
     r = take(r, sdCylinder(p - vec3(3.8, 1.8, -10.5), .08, 1.8), 17.0);
     r = take(r, sdCylinder(p - vec3(-5.5, 1.6, -13.0), .08, 1.6), 17.0);
+
+    // Practice range targets
+    if (targetAlive(0)) r = take(r, targetProp(p, vec3(0.0, 1.15, 4.2)), 27.0);
+    if (targetAlive(1)) r = take(r, targetProp(p, vec3(11.0, 1.15, -8.0)), 27.0);
+    if (targetAlive(2)) r = take(r, targetProp(p, vec3(2.2, 1.2, -19.2)), 27.0);
+    if (targetAlive(3)) r = take(r, targetProp(p, vec3(-8.2, 1.2, -15.2)), 27.0);
+    if (targetAlive(4)) r = take(r, targetProp(p, vec3(5.8, 1.9, -12.0)), 27.0);
     return r;
 }
 
@@ -299,14 +322,18 @@ vec3 portalBasisRight(vec3 n) {
 float portalDisk(vec3 p, vec3 center, vec3 n) {
     vec3 d = p - center;
     float plane = abs(dot(d, n));
-    vec3 r = portalBasisRight(n);
-    vec3 u = cross(n, r);
-    float x = dot(d, r);
-    float y = dot(d, u);
-    float radial = length(vec2(x / .58, y / .95));
-    float rim = abs(radial - 1.0) - .05;
-    float face = max(plane - .025, radial - 1.0);
-    return min(max(rim, plane - .04), face);
+    vec3 rgt = portalBasisRight(n);
+    vec3 upv = cross(n, rgt);
+    float x = dot(d, rgt);
+    float y = dot(d, upv);
+    vec2 oval = vec2(x / .58, y / .95);
+    float radial = length(oval);
+    float ang = atan(oval.y, oval.x);
+    float swirl = .035 * sin(ang * 6.0 + uTime * 5.5);
+    float rim = abs(radial - (1.0 + swirl)) - .055;
+    float face = max(plane - .02, radial - 1.02);
+    float ring = max(rim, plane - .05);
+    return min(ring, face);
 }
 
 vec2 mapPortals(vec3 p, vec2 r) {
@@ -316,9 +343,9 @@ vec2 mapPortals(vec3 p, vec2 r) {
     if (uPortalOrangeOn != 0) {
         r = take(r, portalDisk(p, uPortalOrangePos, normalize(uPortalOrangeN)), 25.0);
     }
-    if (uImpactLife > .01) {
-        r = take(r, sdSphere(p - uImpactPos, .07 + .05 * (1.0 - uImpactLife)), 26.0);
-    }
+    if (uImpactLife > .01) r = take(r, sdSphere(p - uImpactPos, .06 + .04 * (1.0 - uImpactLife)), 26.0);
+    if (uImpactLife1 > .01) r = take(r, sdSphere(p - uImpactPos1, .05 + .04 * (1.0 - uImpactLife1)), 26.0);
+    if (uImpactLife2 > .01) r = take(r, sdSphere(p - uImpactPos2, .05 + .04 * (1.0 - uImpactLife2)), 26.0);
     return r;
 }
 
@@ -429,6 +456,9 @@ vec3 palette(float id, vec3 p) {
     else if (id < 24.5) c = vec3(.15,.55,1.0);   // blue portal
     else if (id < 25.5) c = vec3(1.0,.42,.08);    // orange portal
     else if (id < 26.5) c = vec3(.08,.07,.05);    // bullet scar
+    else if (id < 27.5) c = vec3(.85,.18,.12);    // practice target
+    else if (id < 28.5) c = vec3(.75,.12,.08);    // A site pad
+    else if (id < 29.5) c = vec3(.12,.35,.75);    // B site pad
     else c = vec3(.65,.86,.95);
     if (id == 3.0 && uZone == 1) {
         float brick = step(.92, fract(p.y * 2.4)) + step(.94, fract((p.z + floor(p.y*2.4)*.3)*1.2));
@@ -480,7 +510,9 @@ vec3 shadeSurface(vec3 ro, vec3 rd, vec2 hit, bool secondary) {
     vec3 col = base * (.13 + .10 * max(n.y,0.0) + diff * shadow * attenuation * 4.2 * warm) * ao;
     float emissive = step(20.5, hit.y) * step(hit.y, 23.5)
                    + step(23.5, hit.y) * step(hit.y, 25.5) * 1.8
-                   + step(25.5, hit.y) * step(hit.y, 26.5) * uImpactLife * 2.5;
+                   + step(25.5, hit.y) * step(hit.y, 26.5) * uImpactLife * 2.5
+                   + step(26.5, hit.y) * step(hit.y, 27.5) * 1.4
+                   + step(27.5, hit.y) * step(hit.y, 29.5) * (.55 + .35 * sin(uTime * 3.0));
     col += base * emissive * (hit.y < 21.5 ? 2.4 : (hit.y < 23.5 ? 1.25 : 1.6));
     float spec = pow(max(dot(reflect(-l,n),-rd),0.0),34.0);
     col += spec * shadow * .35;
@@ -518,21 +550,32 @@ void transferPortal(vec3 pos, vec3 rd, vec3 fromPos, vec3 fromN, vec3 toPos, vec
 }
 
 float viewmodelGun(vec3 p) {
-    // Camera-local gun sitting in the lower-right of the view.
-    p.y += uRecoil * .12;
-    p.z += uRecoil * .05;
-    float body = sdRoundBox(p - vec3(.28, -.22, .55), vec3(.05, .055, .22), .02);
-    float barrel = sdCylinder((p - vec3(.28, -.18, .78)).xzy, .018, .16);
-    float grip = sdRoundBox(p - vec3(.28, -.32, .48), vec3(.035, .08, .05), .015);
-    float magazine = sdRoundBox(p - vec3(.28, -.36, .52), vec3(.02, .07, .04), .01);
-    float d = min(body, min(barrel, min(grip, magazine)));
+    float swayX = sin(uTime * 1.7) * .012 * uMoveSway;
+    float swayY = cos(uTime * 2.1) * .008 * uMoveSway;
+    p.x += swayX;
+    p.y += swayY + uRecoil * .14;
+    p.z += uRecoil * .06;
+    float body = sdRoundBox(p - vec3(.30, -.22, .55), vec3(.05, .055, .22), .02);
+    float barrel = sdCylinder((p - vec3(.30, -.18, .80)).xzy, .016, .18);
+    float grip = sdRoundBox(p - vec3(.30, -.33, .48), vec3(.032, .085, .05), .012);
+    float d = min(min(body, barrel), grip);
     if (uWeapon == 0) {
-        float dish = sdCylinder((p - vec3(.34, -.16, .62)).xzy, .05, .03);
-        float prong = sdBox(p - vec3(.34, -.10, .62), vec3(.012, .05, .012));
-        d = min(d, min(dish, prong));
-    } else if (uWeapon == 2) {
-        float stock = sdRoundBox(p - vec3(.28, -.20, .34), vec3(.04, .045, .1), .015);
-        d = min(d, stock);
+        // Aperture-like portal gun: dish + twin prongs + glowing core
+        float dish = sdCylinder((p - vec3(.38, -.15, .66)).xzy, .07, .025);
+        float core = sdSphere(p - vec3(.38, -.15, .66), .035);
+        float prongL = sdBox(p - vec3(.38, -.05, .62), vec3(.01, .07, .01));
+        float prongR = sdBox(p - vec3(.38, -.05, .70), vec3(.01, .07, .01));
+        float tank = sdRoundBox(p - vec3(.22, -.18, .42), vec3(.04, .05, .08), .015);
+        d = min(d, min(min(dish, core), min(min(prongL, prongR), tank)));
+    } else if (uWeapon == 1) {
+        float slide = sdRoundBox(p - vec3(.30, -.16, .62), vec3(.035, .025, .12), .008);
+        float mag = sdRoundBox(p - vec3(.30, -.38, .50), vec3(.018, .07, .035), .008);
+        d = min(d, min(slide, mag));
+    } else {
+        float stock = sdRoundBox(p - vec3(.30, -.20, .32), vec3(.04, .045, .11), .015);
+        float mag = sdRoundBox(p - vec3(.30, -.40, .52), vec3(.02, .09, .04), .01);
+        float handguard = sdRoundBox(p - vec3(.30, -.17, .72), vec3(.04, .03, .1), .01);
+        d = min(d, min(stock, min(mag, handguard)));
     }
     return d;
 }
@@ -541,12 +584,12 @@ vec3 shadeViewmodel(vec2 uv) {
     vec3 rd = normalize(vec3(uv.x, uv.y, 1.35));
     float t = 0.0;
     bool hit = false;
-    for (int i = 0; i < 36; ++i) {
+    for (int i = 0; i < 40; ++i) {
         vec3 p = rd * t;
         float d = viewmodelGun(p);
         if (d < .002) { hit = true; break; }
         t += d;
-        if (t > 1.4) break;
+        if (t > 1.5) break;
     }
     if (!hit) return vec3(-1.0);
     vec3 p = rd * t;
@@ -555,13 +598,17 @@ vec3 shadeViewmodel(vec2 uv) {
         viewmodelGun(p + e.xyy) - viewmodelGun(p - e.xyy),
         viewmodelGun(p + e.yxy) - viewmodelGun(p - e.yxy),
         viewmodelGun(p + e.yyx) - viewmodelGun(p - e.yyx)));
-    vec3 base = uWeapon == 0 ? vec3(.72, .78, .82) :
-                uWeapon == 1 ? vec3(.18, .18, .16) : vec3(.12, .14, .11);
-    float lite = .25 + .75 * max(dot(n, normalize(vec3(-.2, .6, -.5))), 0.0);
+    vec3 base = uWeapon == 0 ? vec3(.70, .78, .84) :
+                uWeapon == 1 ? vec3(.16, .16, .15) : vec3(.11, .13, .10);
+    float lite = .22 + .78 * max(dot(n, normalize(vec3(-.25, .65, -.45))), 0.0);
     vec3 col = base * lite;
+    if (uWeapon == 0) {
+        float glow = exp(-length(p - vec3(.38, -.15, .66)) * 22.0);
+        col += vec3(.25, .55, 1.0) * glow * (.4 + .6 * abs(sin(uTime * 4.0)));
+    }
     if (uMuzzle > .02 && uWeapon != 0) {
-        float flash = exp(-length(p - vec3(.28, -.16, .95)) * 28.0) * uMuzzle;
-        col += vec3(1.0, .72, .28) * flash * 2.2;
+        float flash = exp(-length(p - vec3(.30, -.16, .98)) * 26.0) * uMuzzle;
+        col += vec3(1.0, .7, .25) * flash * 2.4;
     }
     return col;
 }
@@ -636,13 +683,19 @@ void main() {
     color *= .985 + .015*sin(gl_FragCoord.y*1.7);
 
     if (uShowHud != 0) {
-        // Minimal diegetic HUD: crosshair, regional index, and eight memory pips.
+        // Dynamic crosshair: expands with spread / recoil.
         vec2 px = abs(gl_FragCoord.xy-uResolution*.5);
-        float gap = uWeapon == 0 ? 5.0 : 2.0;
-        float crosshair = max(step(px.x,8.0)*step(px.y,0.65)*step(gap,px.x),
-                              step(px.y,8.0)*step(px.x,0.65)*step(gap,px.y));
-        vec3 crossCol = uWeapon == 0 ? vec3(.45,.75,1.0) : vec3(.9,.85,.72);
-        color = mix(color,crossCol,crosshair*.75);
+        float gap = 3.0 + uSpread * 420.0 + uRecoil * 6.0;
+        float arm = 7.0 + uRecoil * 3.0;
+        float crosshair = max(step(px.x, arm)*step(px.y, 0.7)*step(gap, px.x),
+                              step(px.y, arm)*step(px.x, 0.7)*step(gap, px.y));
+        vec3 crossCol = uWeapon == 0 ? vec3(.45,.75,1.0) : vec3(.92,.88,.74);
+        color = mix(color,crossCol,crosshair*.8);
+        if (uHitMarker > .01) {
+            float hm = max(step(abs(px.x-px.y), 1.1)*step(px.x, 10.0)*step(4.0, px.x),
+                           step(abs(px.x+px.y), 1.1)*step(px.x, 10.0)*step(4.0, px.x));
+            color = mix(color, vec3(1.0, .92, .55), hm * uHitMarker);
+        }
         vec2 top = vec2(gl_FragCoord.x, uResolution.y-gl_FragCoord.y);
         for (int i=0;i<9;++i) {
             vec2 center=vec2(uResolution.x-34.0-float(8-i)*16.0,34.0);

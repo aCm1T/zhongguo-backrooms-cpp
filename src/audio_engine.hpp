@@ -35,6 +35,11 @@ public:
         sfxEnvelope_=.7f;
         sfxClock_=0.f;
     }
+    void playHit(){
+        sfxKind_=5;
+        sfxEnvelope_=.85f;
+        sfxClock_=0.f;
+    }
 
     void update(int zone,bool moving,float footGain=1.f){
         if(!device_)return;
@@ -68,6 +73,8 @@ public:
                          +.12f*std::sin(tau*180.f*sfxClock_);
                 }else if(sfxKind_==4){ // reload click
                     burst=.18f*noise*std::exp(-sfxClock_*14.f)+.08f*std::sin(tau*220.f*sfxClock_)*std::exp(-sfxClock_*8.f);
+                }else if(sfxKind_==5){ // target hit
+                    burst=.22f*std::sin(tau*(760.f-sfxClock_*200.f)*sfxClock_)*std::exp(-sfxClock_*10.f);
                 }
                 s+=burst*sfxEnvelope_;
                 sfxEnvelope_*=sfxKind_==3?.991f:.986f;

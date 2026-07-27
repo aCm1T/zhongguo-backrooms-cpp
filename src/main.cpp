@@ -228,6 +228,8 @@ struct App {
     UserSettings settings;
     AudioEngine audio;
     WeaponLoadout weapons;
+    Vec3 moveVelocity{};
+    float currentSpread{};
     Screen screen{Screen::Home}, returnScreen{Screen::Home};
     int selection{}, archiveSelection{};
     int zone{0};
@@ -246,10 +248,13 @@ struct App {
 
     UiCanvas ui;
     GLuint uiTexture{};
+    GLuint sceneFbo{}, sceneColor{};
+    int sceneW{}, sceneH{};
     GLint uResolution{}, uTime{}, uCamera{}, uYawPitch{}, uZone{}, uMask{}, uHud{}, uQuality{}, uUiTexture{}, uSeal{};
     GLint uWeapon{}, uMuzzle{}, uRecoil{}, uPortalBlueOn{}, uPortalOrangeOn{};
     GLint uPortalBluePos{}, uPortalBlueN{}, uPortalOrangePos{}, uPortalOrangeN{};
-    GLint uImpactPos{}, uImpactLife{}, uDestroyedMask{};
+    GLint uImpactPos{}, uImpactLife{}, uImpactPos1{}, uImpactLife1{}, uImpactPos2{}, uImpactLife2{};
+    GLint uDestroyedMask{}, uTargetMask{}, uHitMarker{}, uSpread{}, uMoveSway{};
 
     void initialize(QualityPreference qualityPreference) {
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0)
@@ -316,13 +321,24 @@ struct App {
         uPortalOrangeN=gl.GetUniformLocation(program,"uPortalOrangeN");
         uImpactPos=gl.GetUniformLocation(program,"uImpactPos");
         uImpactLife=gl.GetUniformLocation(program,"uImpactLife");
+        uImpactPos1=gl.GetUniformLocation(program,"uImpactPos1");
+        uImpactLife1=gl.GetUniformLocation(program,"uImpactLife1");
+        uImpactPos2=gl.GetUniformLocation(program,"uImpactPos2");
+        uImpactLife2=gl.GetUniformLocation(program,"uImpactLife2");
         uDestroyedMask=gl.GetUniformLocation(program,"uDestroyedMask");
+        uTargetMask=gl.GetUniformLocation(program,"uTargetMask");
+        uHitMarker=gl.GetUniformLocation(program,"uHitMarker");
+        uSpread=gl.GetUniformLocation(program,"uSpread");
+        uMoveSway=gl.GetUniformLocation(program,"uMoveSway");
         gl.GenTextures(1,&uiTexture);gl.ActiveTexture(GL_TEXTURE0);gl.BindTexture(GL_TEXTURE_2D,uiTexture);
         gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
         gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
         gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
         gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
         gl.PixelStorei(GL_UNPACK_ALIGNMENT,4);gl.Uniform1i(uUiTexture,0);
+        gl.GenFramebuffers(1,&sceneFbo);
+        gl.GenTextures(1,&sceneColor);
+        ensureSceneTarget(drawableWidth,drawableHeight);
         ui.resize(width,height);setMouseCapture(false);drawUi();uploadUi();
         lastTicks = SDL_GetTicks();
         std::cout << "OpenGL vendor   : " << gpuVendor << '\n'
@@ -334,12 +350,33 @@ struct App {
     void shutdown() {
         saveSettings(settings);
         audio.shutdown();
+        if(sceneColor)gl.DeleteTextures(1,&sceneColor);
+        if(sceneFbo)gl.DeleteFramebuffers(1,&sceneFbo);
         if(uiTexture)gl.DeleteTextures(1,&uiTexture);
         if (program) gl.DeleteProgram(program);
         if (vao) gl.DeleteVertexArrays(1, &vao);
         if (context) SDL_GL_DeleteContext(context);
         if (window) SDL_DestroyWindow(window);
         SDL_Quit();
+    }
+
+    void ensureSceneTarget(int dw, int dh) {
+        const float scale = quality <= 0 ? .55f : (quality == 1 ? .78f : 1.f);
+        const int w = std::max(1, static_cast<int>(std::lround(dw * scale)));
+        const int h = std::max(1, static_cast<int>(std::lround(dh * scale)));
+        if (sceneFbo && sceneColor && w == sceneW && h == sceneH) return;
+        sceneW = w; sceneH = h;
+        gl.BindTexture(GL_TEXTURE_2D, sceneColor);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, sceneW, sceneH, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        gl.BindFramebuffer(GL_FRAMEBUFFER, sceneFbo);
+        gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sceneColor, 0);
+        if (gl.CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            throw std::runtime_error("scene framebuffer incomplete");
+        gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
     void setMouseCapture(bool capture){mouseCaptured=capture;SDL_SetRelativeMouseMode(capture?1:0);SDL_ShowCursor(capture?0:1);}
@@ -350,15 +387,23 @@ struct App {
     void continueGame(){setZone(saved.zone);setScreen(Screen::Playing);}
     void openFrom(Screen from,Screen target){returnScreen=from;setScreen(target);}
 
-    Vec3 aimDirection() const {
-        const float cy=std::cos(yaw),sy=std::sin(yaw),cp=std::cos(pitch),sp=std::sin(pitch);
+    Vec3 aimDirection(bool withSpread = false) const {
+        float aimYaw = yaw, aimPitch = pitch;
+        if (withSpread && currentSpread > 1e-5f) {
+            // Deterministic-ish jitter from ammo cursor + time, keeps feel readable.
+            const float seed = static_cast<float>(weapons.ammoMag[static_cast<int>(weapons.current)] * 17 + weapons.impactCursor * 13);
+            aimYaw += std::sin(seed * 12.9898f) * currentSpread;
+            aimPitch += std::cos(seed * 78.233f) * currentSpread * .85f;
+            aimPitch = std::clamp(aimPitch, -1.35f, 1.35f);
+        }
+        const float cy=std::cos(aimYaw),sy=std::sin(aimYaw),cp=std::cos(aimPitch),sp=std::sin(aimPitch);
         return vnormalize({sy*cp,sp,-cy*cp});
     }
 
     void placePortal(bool blue) {
-        const RayHit hit=sceneRaycast(zone,camera,aimDirection(),weapons.destroyedMask);
+        const RayHit hit=sceneRaycast(zone,camera,aimDirection(false),weapons.destroyedMask,weapons.targetMask);
         if(!hit.hit||hit.t>42.f)return;
-        // Avoid stacking portals almost on top of each other.
+        if(hit.material==27||hit.material==28||hit.material==29)return; // no portals on pads/targets
         const PortalDisk& other=blue?weapons.orange:weapons.blue;
         if(other.active){
             const Vec3 d=hit.pos-other.pos;
@@ -367,12 +412,18 @@ struct App {
         PortalDisk& portal=blue?weapons.blue:weapons.orange;
         portal.active=true;
         portal.normal=vnormalize(hit.normal);
-        portal.pos=hit.pos+portal.normal*.04f;
+        portal.pos=hit.pos+portal.normal*.05f;
         weapons.muzzle=.55f;
-        weapons.recoil=.35f;
+        weapons.recoil=.4f;
         weapons.cooldown=kWeapons[0].fireInterval;
         audio.playPortal();
         uiDirty=true;
+    }
+
+    void rewardAmmo() {
+        weapons.ammoReserve[1] = std::min(72, weapons.ammoReserve[1] + 12);
+        weapons.ammoReserve[2] = std::min(150, weapons.ammoReserve[2] + 30);
+        uiDirty = true;
     }
 
     void fireBullet() {
@@ -387,24 +438,41 @@ struct App {
         const WeaponDef& def=kWeapons[wid];
         weapons.cooldown=def.fireInterval;
         weapons.muzzle=1.f;
-        weapons.recoil=std::min(1.f,weapons.recoil+1.f);
-        pitch=std::clamp(pitch+def.recoilPitch,-1.35f,1.35f);
-        yaw+=((weapons.ammoMag[wid]&1)?1.f:-1.f)*def.recoilYaw;
+        weapons.recoil=std::min(1.f,weapons.recoil+.85f);
+        pitch=std::clamp(pitch+def.recoilPitch*(.65f+weapons.recoil*.45f),-1.35f,1.35f);
+        yaw+=((weapons.ammoMag[wid]&1)?1.f:-1.f)*def.recoilYaw*(.7f+weapons.recoil*.5f);
         audio.playGunshot(wid==2);
 
-        const RayHit hit=sceneRaycast(zone,camera,aimDirection(),weapons.destroyedMask);
+        const RayHit hit=sceneRaycast(zone,camera,aimDirection(true),weapons.destroyedMask,weapons.targetMask);
         if(hit.hit){
-            weapons.impactPos=hit.pos-hit.normal*.03f;
-            weapons.impactLife=1.f;
+            weapons.pushImpact(hit.pos-hit.normal*.03f);
             if(zone==9&&hit.material==5&&tryDestroyCover(weapons.destroyedMask,hit.pos))
                 uiDirty=true;
+            if(zone==9&&hit.material==27&&tryHitTarget(weapons.targetMask,hit.pos)){
+                weapons.hitMarker=1.f;
+                ++weapons.targetsDown;
+                audio.playHit();
+                if(weapons.targetsDown>=kPracticeTargetCount){
+                    rewardAmmo();
+                    weapons.targetMask=0;
+                    weapons.targetsDown=0;
+                }
+                uiDirty=true;
+            }else if(hit.material==5||hit.material==19||hit.material==13){
+                weapons.hitMarker=.55f;
+            }
         }
         uiDirty=true;
     }
 
     void beginReload() {
         const int wid=static_cast<int>(weapons.current);
-        if(wid==0||weapons.reloading)return;
+        if(wid==0){
+            weapons.clearPortals();
+            uiDirty=true;
+            return;
+        }
+        if(weapons.reloading)return;
         if(weapons.ammoMag[wid]>=kWeapons[wid].magSize)return;
         if(weapons.ammoReserve[wid]<=0)return;
         weapons.reloading=true;
@@ -451,21 +519,28 @@ struct App {
 
         const Vec3 body{camera.x,feetY+eyeHeight*.5f,camera.z};
         const Vec3 local=body-from.pos;
-        const Vec3 outBody=to.pos+xform(local)+to.normal*.85f;
+        const Vec3 outBody=to.pos+xform(local)+to.normal*.9f;
         feetY=outBody.y-eyeHeight*.5f;
         camera.x=outBody.x;
         camera.z=outBody.z;
         camera.y=feetY+eyeHeight;
-        verticalVelocity=std::max(verticalVelocity,0.f);
+
+        // Conserve momentum through the portal pair.
+        Vec3 vel = moveVelocity;
+        vel.y = verticalVelocity;
+        vel = xform(vel);
+        moveVelocity = {vel.x, 0.f, vel.z};
+        verticalVelocity = std::clamp(vel.y, -8.f, 10.f);
+        if (std::abs(to.normal.y) > .55f)
+            verticalVelocity += to.normal.y * 2.8f;
         grounded=false;
 
         const float yawFrom=std::atan2(from.normal.x,-from.normal.z);
         const float yawTo=std::atan2(-to.normal.x,to.normal.z);
         yaw+=yawTo-yawFrom;
-        // Soft pitch flip for floor/ceiling portals.
         if(std::abs(from.normal.y)>.7f||std::abs(to.normal.y)>.7f)
-            pitch=std::clamp(-pitch*.35f+to.normal.y*.25f,-1.35f,1.35f);
-        weapons.portalCooldown=.45f;
+            pitch=std::clamp(-pitch*.4f+to.normal.y*.3f,-1.35f,1.35f);
+        weapons.portalCooldown=.38f;
         audio.playPortal();
     }
 
@@ -541,13 +616,14 @@ struct App {
                 const int wid=static_cast<int>(weapons.current);
                 std::string gunLine=std::string(kWeapons[wid].name);
                 if(wid==0){
-                    gunLine+="  ·  LMB 蓝门  RMB 橙门";
+                    gunLine+="  ·  LMB 蓝门  RMB 橙门  ·  R 清除传送门";
                     if(weapons.blue.active||weapons.orange.active)
-                        gunLine+="  ·  门 "+std::to_string(weapons.blue.active+weapons.orange.active)+"/2";
+                        gunLine+="  ·  "+std::to_string(static_cast<int>(weapons.blue.active)+static_cast<int>(weapons.orange.active))+"/2";
                 }else if(weapons.reloading)gunLine+="  ·  装填中";
                 else gunLine+="  ·  "+std::to_string(weapons.ammoMag[wid])+" / "+std::to_string(weapons.ammoReserve[wid]);
+                if(zone==9)gunLine+="  ·  靶 "+std::to_string(weapons.targetsDown)+"/"+std::to_string(kPracticeTargetCount);
                 ui.text(gunLine,40,72,13,{.82,.78,.68,1},true);
-                ui.text("1 传送枪 · 2 USP · 3 AK  ·  滚轮切枪 ·  R 装填 ·  Q 上次武器 ·  Tab 换区",w*.5-310,h-38,12,{.72,.72,.67,.85});}
+                ui.text("1 传送枪 · 2 USP · 3 AK  ·  滚轮切枪 ·  R 装填/清门 ·  F 重置沙盘 ·  Tab 换区",w*.5-340,h-38,12,{.72,.72,.67,.85});}
             if(nearSeal){ui.rect(w*.5-145,h*.62,290,46,{.02,.025,.02,.82});ui.outline(w*.5-145,h*.62,290,46,{.8,.35,.2,.7});ui.text("[ E ]  收录乡音印记",w*.5-92,h*.62+11,15,paper,true);}
             else if(nearPortal){ui.rect(w*.5-145,h*.62,290,46,{.02,.025,.02,.82});ui.outline(w*.5-145,h*.62,290,46,{.8,.35,.2,.7});ui.text("[ E ]  打开地域档案",w*.5-92,h*.62+11,15,paper,true);}
         }else if(screen==Screen::Home){
@@ -614,8 +690,10 @@ struct App {
         camera.y=feetY+eyeHeight;
         yaw = pitch = 0.f;
         weapons.blue.active=false;weapons.orange.active=false;
-        weapons.destroyedMask=0;weapons.impactLife=0;weapons.muzzle=0;weapons.recoil=0;
+        weapons.resetArena();
+        weapons.muzzle=0;weapons.recoil=0;weapons.hitMarker=0;weapons.sway=0;
         weapons.reloading=false;weapons.reloadLeft=0;weapons.cooldown=0;weapons.portalCooldown=0;
+        moveVelocity={};currentSpread=0;
         saved.zone=zone;if(screen==Screen::Playing)saveProgress({collectedMask,zone});uiDirty=true;updateTitle(0);
     }
 
@@ -758,6 +836,7 @@ struct App {
                     }else if(sc==SC_Q){weapons.selectPrevious();uiDirty=true;}
                     else if(sc==SC_E)interact();
                     else if(sc==SC_R)beginReload();
+                    else if(sc==SC_F){weapons.resetArena();uiDirty=true;}
                     else if(sc==SC_SPACE)jumpRequested=true;
                     else if(sc==SC_M){showHud=!showHud;settings.hud=showHud;saveSettings(settings);uiDirty=true;}
                     else if(sc==SC_1){weapons.select(WeaponId::PortalGun);uiDirty=true;}
@@ -776,15 +855,16 @@ struct App {
         if(screen!=Screen::Playing){playerMoving=false;mouseLeft=mouseRight=false;audio.update(zone,false);return;}
         weapons.cooldown=std::max(0.f,weapons.cooldown-dt);
         weapons.portalCooldown=std::max(0.f,weapons.portalCooldown-dt);
-        weapons.muzzle=std::max(0.f,weapons.muzzle-dt*4.5f);
-        weapons.recoil=std::max(0.f,weapons.recoil-dt*3.2f);
-        weapons.impactLife=std::max(0.f,weapons.impactLife-dt*1.8f);
+        weapons.muzzle=std::max(0.f,weapons.muzzle-dt*4.8f);
+        weapons.recoil=std::max(0.f,weapons.recoil-dt*2.8f);
+        weapons.hitMarker=std::max(0.f,weapons.hitMarker-dt*3.5f);
+        weapons.sway=std::max(0.f,weapons.sway-dt*2.5f);
+        for(float& life:weapons.impactLife) life=std::max(0.f,life-dt*1.6f);
         if(weapons.reloading){
             weapons.reloadLeft-=dt;
             if(weapons.reloadLeft<=0.f)finishReload();
         }
 
-        // Weapon fire: portal gun is click-to-place; USP is semi-auto; AK is full-auto.
         if(firePressed||(weapons.current==WeaponId::Ak47&&mouseLeft)){
             if(weapons.current==WeaponId::PortalGun){
                 if(firePressed){
@@ -803,8 +883,6 @@ struct App {
         const float length = std::sqrt(forward * forward + strafe * strafe);
         if (length > 1.f) { forward /= length; strafe /= length; }
 
-        // Counter-Strike style controls: running is the default, Shift walks quietly,
-        // and Ctrl/C lowers both the viewpoint and movement speed while held.
         quietWalking=down(SC_LSHIFT);
         crouching=down(SC_LCTRL)||down(SC_C);
         const float targetEye=crouching?1.05f:1.65f;
@@ -838,6 +916,13 @@ struct App {
         tryMove(camera.x+dx,camera.z);
         tryMove(camera.x,camera.z+dz);
 
+        // Carry residual portal momentum briefly.
+        if(vlength(moveVelocity)>.05f){
+            tryMove(camera.x+moveVelocity.x*dt,camera.z);
+            tryMove(camera.x,camera.z+moveVelocity.z*dt);
+            moveVelocity=moveVelocity*std::exp(-4.5f*dt);
+        }
+
         const float floorY=groundHeight(camera.x,camera.z);
         if(grounded){
             const float drop=feetY-floorY;
@@ -859,10 +944,25 @@ struct App {
         tryPortalTeleport();
 
         playerMoving=std::hypot(camera.x-oldX,camera.z-oldZ)>.0001f;
+        if(playerMoving){
+            const float invDt=dt>1e-4f?1.f/dt:0.f;
+            moveVelocity.x=(camera.x-oldX)*invDt*.35f+moveVelocity.x*.65f;
+            moveVelocity.z=(camera.z-oldZ)*invDt*.35f+moveVelocity.z*.65f;
+        }
         stepViewOffset*=std::exp(-12.f*dt);
         const float bobAmount=crouching?.010f:(quietWalking?.014f:.025f);
         const float bob=grounded&&playerMoving?std::sin(SDL_GetTicks()*.012f)*bobAmount:0.f;
         camera.y=feetY+eyeHeight+stepViewOffset+bob;
+
+        // Spread model: crouch tightens, air/move opens the cone.
+        const int wid=static_cast<int>(weapons.current);
+        float desiredSpread=kWeapons[wid].baseSpread;
+        if(playerMoving)desiredSpread+=kWeapons[wid].moveSpread;
+        if(!grounded)desiredSpread+=kWeapons[wid].moveSpread*1.4f;
+        if(crouching)desiredSpread*=.55f;
+        desiredSpread+=weapons.recoil*.02f;
+        currentSpread+=(desiredSpread-currentSpread)*(1.f-std::exp(-10.f*dt));
+
         const Vec3 seal=zoneSeal(zone);const float sx=camera.x-seal.x,sz=camera.z-seal.z;const bool nowNear=zone>0&&!(collectedMask&(1u<<(zone-1)))&&sx*sx+sz*sz<7.f;
         if(nowNear!=nearSeal){nearSeal=nowNear;uiDirty=true;}
         const bool nowPortal=zone==0&&insideCircle(camera.x,camera.z,0,-14.f,2.5f);if(nowPortal!=nearPortal){nearPortal=nowPortal;uiDirty=true;}
@@ -872,11 +972,13 @@ struct App {
 
     void render(float seconds) {
         if(uiDirty){drawUi();uploadUi();}
-        gl.Viewport(0, 0, drawableWidth, drawableHeight);
+        ensureSceneTarget(drawableWidth, drawableHeight);
+        gl.BindFramebuffer(GL_FRAMEBUFFER, sceneFbo);
+        gl.Viewport(0, 0, sceneW, sceneH);
         gl.ClearColor(0, 0, 0, 1);
         gl.Clear(GL_COLOR_BUFFER_BIT);
         gl.UseProgram(program);
-        gl.Uniform2f(uResolution, static_cast<float>(drawableWidth), static_cast<float>(drawableHeight));
+        gl.Uniform2f(uResolution, static_cast<float>(sceneW), static_cast<float>(sceneH));
         gl.Uniform1f(uTime, seconds);
         gl.Uniform3f(uCamera, camera.x, camera.y, camera.z);
         gl.Uniform2f(uYawPitch, yaw, pitch);
@@ -894,11 +996,25 @@ struct App {
         gl.Uniform3f(uPortalBlueN, weapons.blue.normal.x, weapons.blue.normal.y, weapons.blue.normal.z);
         gl.Uniform3f(uPortalOrangePos, weapons.orange.pos.x, weapons.orange.pos.y, weapons.orange.pos.z);
         gl.Uniform3f(uPortalOrangeN, weapons.orange.normal.x, weapons.orange.normal.y, weapons.orange.normal.z);
-        gl.Uniform3f(uImpactPos, weapons.impactPos.x, weapons.impactPos.y, weapons.impactPos.z);
-        gl.Uniform1f(uImpactLife, weapons.impactLife);
+        gl.Uniform3f(uImpactPos, weapons.impactPos[0].x, weapons.impactPos[0].y, weapons.impactPos[0].z);
+        gl.Uniform1f(uImpactLife, weapons.impactLife[0]);
+        gl.Uniform3f(uImpactPos1, weapons.impactPos[1].x, weapons.impactPos[1].y, weapons.impactPos[1].z);
+        gl.Uniform1f(uImpactLife1, weapons.impactLife[1]);
+        gl.Uniform3f(uImpactPos2, weapons.impactPos[2].x, weapons.impactPos[2].y, weapons.impactPos[2].z);
+        gl.Uniform1f(uImpactLife2, weapons.impactLife[2]);
         gl.Uniform1i(uDestroyedMask, static_cast<int>(weapons.destroyedMask));
+        gl.Uniform1i(uTargetMask, static_cast<int>(weapons.targetMask));
+        gl.Uniform1f(uHitMarker, weapons.hitMarker);
+        gl.Uniform1f(uSpread, currentSpread);
+        gl.Uniform1f(uMoveSway, playerMoving ? (quietWalking ? .45f : 1.f) : .12f);
         gl.ActiveTexture(GL_TEXTURE0);gl.BindTexture(GL_TEXTURE_2D,uiTexture);gl.Uniform1i(uUiTexture,0);
         gl.DrawArrays(GL_TRIANGLES, 0, 3);
+
+        gl.BindFramebuffer(GL_READ_FRAMEBUFFER, sceneFbo);
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        gl.BlitFramebuffer(0, 0, sceneW, sceneH, 0, 0, drawableWidth, drawableHeight,
+                           GL_COLOR_BUFFER_BIT, quality <= 0 ? GL_NEAREST : GL_LINEAR);
+        gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
         SDL_GL_SwapWindow(window);
     }
 
