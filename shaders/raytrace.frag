@@ -36,8 +36,15 @@ uniform float uMoveSway;
 uniform float uReload;
 uniform vec3 uCubePos;
 uniform int uButtonOn;
-uniform int uDoorOpen;
+uniform float uDoorOpenT;
 uniform int uCubeAlive;
+uniform float uSwap;
+uniform float uDeny;
+uniform int uPreviewOn;
+uniform int uPreviewOk;
+uniform int uPreviewBlue;
+uniform vec3 uPreviewPos;
+uniform vec3 uPreviewN;
 
 #define MAX_STEPS 92
 #define MAX_DIST 70.0
@@ -314,6 +321,15 @@ vec2 mapDust2(vec3 p) {
     r = take(r, sdBox(p - vec3(-0.85, 1.5, 0.55), vec3(0.55, 1.5, 0.06)), 17.0);
     r = take(r, sdBox(p - vec3( 0.85, 1.5, 0.55), vec3(0.55, 1.5, 0.06)), 17.0);
     r = take(r, sdBox(p - vec3(10.9, -0.15, -11.5), vec3(2.4, 0.35, 1.6)), 5.0); // long pit
+    // Pit rim walls
+    r = take(r, sdBox(p - vec3(8.55, 0.55, -11.5), vec3(0.18, 0.7, 1.7)), 19.0);
+    r = take(r, sdBox(p - vec3(13.25, 0.55, -11.5), vec3(0.18, 0.7, 1.7)), 19.0);
+    // T-roof beams + B window ledge
+    r = take(r, sdBox(p - vec3(0.0, 3.1, 16.0), vec3(4.8, 0.12, 2.6)), 17.0);
+    r = take(r, sdBox(p - vec3(-10.5, 1.55, -12.8), vec3(0.9, 0.12, 0.35)), 17.0);
+    // Goose stack near A default already; add barrel nest at mid
+    r = take(r, sdCylinder(p - vec3(-2.2, 0.45, 3.8), 0.35, 0.45), 13.0);
+    r = take(r, sdCylinder(p - vec3(-2.2, 1.15, 3.8), 0.28, 0.28), 13.0);
     // Palm-ish trunks near A/B
     r = take(r, sdCylinder(p - vec3(6.8, 1.7, -18.5), .11, 1.7), 16.0);
     r = take(r, sdSphere(p - vec3(6.8, 3.5, -18.5), .55), 16.0);
@@ -324,14 +340,14 @@ vec2 mapDust2(vec3 p) {
 
     // Portal puzzle: floor button near mid, sealed armory door on Long A wall
     {
-        float btn = sdCylinder(p - vec3(0.0, 0.06, 5.4), 0.7, 0.06);
+        float btnH = uButtonOn != 0 ? 0.035 : 0.06;
+        float btn = sdCylinder(p - vec3(0.0, btnH, 5.4), 0.7, btnH);
         r = take(r, btn, uButtonOn != 0 ? 31.0 : 30.0);
     }
-    if (uDoorOpen == 0) {
-        r = take(r, sdBox(p - vec3(13.2, 1.5, -8.0), vec3(0.18, 1.5, 1.4)), 32.0);
-    } else {
-        // Open door slides upward as a visual remnant
-        r = take(r, sdBox(p - vec3(13.2, 3.4, -8.0), vec3(0.18, 0.35, 1.4)), 32.0);
+    {
+        float openT = clamp(uDoorOpenT, 0.0, 1.0);
+        float doorY = mix(1.5, 3.55, openT);
+        r = take(r, sdBox(p - vec3(13.2, doorY, -8.0), vec3(0.18, 1.5, 1.4)), 32.0);
     }
     // Armory interior crate (ammo reward room)
     r = take(r, sdBox(p - vec3(15.2, 0.45, -8.0), vec3(0.55, 0.45, 0.55)), 5.0);
@@ -341,6 +357,12 @@ vec2 mapDust2(vec3 p) {
 
     if (uCubeAlive != 0) {
         r = take(r, sdRoundBox(p - uCubePos, vec3(0.32, 0.32, 0.32), 0.04), 33.0);
+    }
+
+    // Ghost portal placement preview
+    if (uPreviewOn != 0) {
+        float ghost = portalDisk(p, uPreviewPos, normalize(uPreviewN));
+        r = take(r, ghost, uPreviewOk != 0 ? (uPreviewBlue != 0 ? 34.0 : 35.0) : 36.0);
     }
 
     // Practice range targets
@@ -501,6 +523,9 @@ vec3 palette(float id, vec3 p) {
     else if (id < 31.5) c = vec3(.2,1.0,.45);     // button on
     else if (id < 32.5) c = vec3(.72,.74,.78);    // puzzle door
     else if (id < 33.5) c = vec3(.82,.55,.18);    // weighted cube
+    else if (id < 34.5) c = vec3(.25,.65,1.0);    // preview blue
+    else if (id < 35.5) c = vec3(1.0,.5,.12);     // preview orange
+    else if (id < 36.5) c = vec3(.9,.15,.12);      // preview invalid
     else c = vec3(.65,.86,.95);
     if (id == 3.0 && uZone == 1) {
         float brick = step(.92, fract(p.y * 2.4)) + step(.94, fract((p.z + floor(p.y*2.4)*.3)*1.2));
@@ -556,8 +581,11 @@ vec3 shadeSurface(vec3 ro, vec3 rd, vec2 hit, bool secondary) {
                    + step(26.5, hit.y) * step(hit.y, 27.5) * 1.4
                    + step(27.5, hit.y) * step(hit.y, 29.5) * (.55 + .35 * sin(uTime * 3.0))
                    + step(30.5, hit.y) * step(hit.y, 31.5) * 2.2
-                   + step(32.5, hit.y) * step(hit.y, 33.5) * (.25 + .2 * abs(sin(uTime * 2.0)));
+                   + step(32.5, hit.y) * step(hit.y, 33.5) * (.25 + .2 * abs(sin(uTime * 2.0)))
+                   + step(33.5, hit.y) * step(hit.y, 35.5) * 1.1
+                   + step(35.5, hit.y) * step(hit.y, 36.5) * (0.6 + 0.4 * abs(sin(uTime * 10.0)));
     col += base * emissive * (hit.y < 21.5 ? 2.4 : (hit.y < 23.5 ? 1.25 : 1.6));
+    if (hit.y > 33.5 && hit.y < 36.5) col *= 0.55; // ghost preview translucency feel
     if (hit.y > 32.5 && hit.y < 33.5) {
         // Heart stamp on the weighted cube.
         float hx = abs(mod(p.x + p.z, 0.64) - 0.32);
@@ -602,9 +630,9 @@ void transferPortal(vec3 pos, vec3 rd, vec3 fromPos, vec3 fromN, vec3 toPos, vec
 float viewmodelGun(vec3 p) {
     float swayX = sin(uTime * 1.7) * .012 * uMoveSway;
     float swayY = cos(uTime * 2.1) * .008 * uMoveSway;
-    p.x += swayX;
-    p.y += swayY + uRecoil * .14 - uReload * .22;
-    p.z += uRecoil * .06 + uReload * .08;
+    p.x += swayX + uSwap * .18;
+    p.y += swayY + uRecoil * .14 - uReload * .22 - uSwap * .28;
+    p.z += uRecoil * .06 + uReload * .08 + uSwap * .12;
     p.x += uReload * .05;
     float body = sdRoundBox(p - vec3(.30, -.22, .55), vec3(.05, .055, .22), .02);
     float barrel = sdCylinder((p - vec3(.30, -.18, .80)).xzy, .016, .18);
@@ -654,7 +682,8 @@ vec3 shadeViewmodel(vec2 uv) {
     vec3 col = base * lite;
     if (uWeapon == 0) {
         float glow = exp(-length(p - vec3(.38, -.15, .66)) * 22.0);
-        col += vec3(.25, .55, 1.0) * glow * (.4 + .6 * abs(sin(uTime * 4.0)));
+        vec3 glowCol = mix(vec3(.25, .55, 1.0), vec3(1.0, .2, .12), clamp(uDeny, 0.0, 1.0));
+        col += glowCol * glow * (.4 + .6 * abs(sin(uTime * 4.0)));
     }
     if (uMuzzle > .02 && uWeapon != 0) {
         float flash = exp(-length(p - vec3(.30, -.16, .98)) * 26.0) * uMuzzle;

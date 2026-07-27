@@ -57,6 +57,7 @@ struct PuzzleState {
     bool cubeGrounded{true};
     bool buttonOn{};
     bool doorOpen{};
+    float doorOpenT{};
     bool armoryLooted{};
     bool nearCube{};
     bool nearArmory{};
@@ -68,10 +69,12 @@ struct PuzzleState {
         cubeGrounded = true;
         buttonOn = false;
         doorOpen = false;
+        doorOpenT = 0.f;
         armoryLooted = false;
         nearCube = false;
         nearArmory = false;
     }
+    bool doorBlocking() const { return doorOpenT < .72f; }
 };
 
 inline constexpr Vec3 kPracticeTargets[] = {
@@ -186,7 +189,7 @@ inline float sceneDistance(int zone, Vec3 p, std::uint32_t destroyedMask, std::u
 
         if (puzzle) {
             take(sdCylinderY(p - Vec3{0.f, .06f, 5.4f}, .7f, .06f), puzzle->buttonOn ? 31 : 30);
-            if (!puzzle->doorOpen)
+            if (puzzle->doorBlocking())
                 take(sdBox(p - Vec3{13.2f, 1.5f, -8.f}, {.18f, 1.5f, 1.4f}), 32);
             take(sdBox(p - Vec3{16.4f, 2.f, -8.f}, {.25f, 2.f, 1.6f}), 19);
             take(sdBox(p - Vec3{14.8f, 2.f, -6.4f}, {1.4f, 2.f, .25f}), 19);
@@ -325,6 +328,9 @@ struct WeaponLoadout {
     float recoil{};
     float hitMarker{};
     float sway{};
+    float swapT{};
+    float denyFlash{};
+    float viewPunch{};
     bool reloading{};
     PortalDisk blue{};
     PortalDisk orange{};
@@ -344,6 +350,7 @@ struct WeaponLoadout {
         reloadLeft = 0.f;
         cooldown = .1f;
         sway = 1.f;
+        swapT = 1.f;
     }
     void selectPrevious() { select(previous); }
     void cycle(int delta) {

@@ -256,8 +256,11 @@ struct App {
     GLint uPortalBluePos{}, uPortalBlueN{}, uPortalOrangePos{}, uPortalOrangeN{};
     GLint uImpactPos{}, uImpactLife{}, uImpactPos1{}, uImpactLife1{}, uImpactPos2{}, uImpactLife2{};
     GLint uDestroyedMask{}, uTargetMask{}, uHitMarker{}, uSpread{}, uMoveSway{};
-    GLint uReload{}, uCubePos{}, uButtonOn{}, uDoorOpen{}, uCubeAlive{};
+    GLint uReload{}, uCubePos{}, uButtonOn{}, uDoorOpenT{}, uCubeAlive{};
+    GLint uSwap{}, uDeny{}, uPreviewOn{}, uPreviewOk{}, uPreviewBlue{}, uPreviewPos{}, uPreviewN{};
     GLint uUiOverlayTex{};
+    bool previewOn{}, previewOk{}, previewBlue{true};
+    Vec3 previewPos{}, previewN{0.f, 0.f, 1.f};
 
     void initialize(QualityPreference qualityPreference) {
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0)
@@ -338,8 +341,15 @@ struct App {
         uReload=gl.GetUniformLocation(program,"uReload");
         uCubePos=gl.GetUniformLocation(program,"uCubePos");
         uButtonOn=gl.GetUniformLocation(program,"uButtonOn");
-        uDoorOpen=gl.GetUniformLocation(program,"uDoorOpen");
+        uDoorOpenT=gl.GetUniformLocation(program,"uDoorOpenT");
         uCubeAlive=gl.GetUniformLocation(program,"uCubeAlive");
+        uSwap=gl.GetUniformLocation(program,"uSwap");
+        uDeny=gl.GetUniformLocation(program,"uDeny");
+        uPreviewOn=gl.GetUniformLocation(program,"uPreviewOn");
+        uPreviewOk=gl.GetUniformLocation(program,"uPreviewOk");
+        uPreviewBlue=gl.GetUniformLocation(program,"uPreviewBlue");
+        uPreviewPos=gl.GetUniformLocation(program,"uPreviewPos");
+        uPreviewN=gl.GetUniformLocation(program,"uPreviewN");
         gl.UseProgram(uiProgram);
         uUiOverlayTex=gl.GetUniformLocation(uiProgram,"uUiTexture");
         gl.Uniform1i(uUiOverlayTex,0);
@@ -417,12 +427,15 @@ struct App {
 
     void placePortal(bool blue) {
         const RayHit hit=sceneRaycast(zone,camera,aimDirection(false),weapons.destroyedMask,weapons.targetMask,48.f,&puzzle);
-        if(!hit.hit||hit.t>42.f)return;
-        if(hit.material==27||hit.material==28||hit.material==29||hit.material==30||hit.material==31||hit.material==33)return;
+        auto deny=[&](){weapons.denyFlash=1.f;weapons.cooldown=.12f;};
+        if(!hit.hit||hit.t>42.f){deny();return;}
+        if(hit.material==27||hit.material==28||hit.material==29||hit.material==30||hit.material==31||hit.material==33){deny();return;}
+        // Prefer walls/structures over shallow floor placements for readable portals.
+        if(std::abs(hit.normal.y)>.82f&&hit.material==1){deny();return;}
         const PortalDisk& other=blue?weapons.orange:weapons.blue;
         if(other.active){
             const Vec3 d=hit.pos-other.pos;
-            if(vdot(d,d)<1.2f)return;
+            if(vdot(d,d)<1.2f){deny();return;}
         }
         PortalDisk& portal=blue?weapons.blue:weapons.orange;
         portal.active=true;
@@ -431,6 +444,7 @@ struct App {
         weapons.muzzle=.55f;
         weapons.recoil=.4f;
         weapons.cooldown=kWeapons[0].fireInterval;
+        weapons.denyFlash=0.f;
         audio.playPortal();
         uiDirty=true;
     }
@@ -454,6 +468,7 @@ struct App {
         weapons.cooldown=def.fireInterval;
         weapons.muzzle=1.f;
         weapons.recoil=std::min(1.f,weapons.recoil+.85f);
+        weapons.viewPunch=std::min(1.f,weapons.viewPunch+(wid==2?.55f:.28f));
         pitch=std::clamp(pitch+def.recoilPitch*(.65f+weapons.recoil*.45f),-1.35f,1.35f);
         yaw+=((weapons.ammoMag[wid]&1)?1.f:-1.f)*def.recoilYaw*(.7f+weapons.recoil*.5f);
         audio.playGunshot(wid==2);
@@ -645,7 +660,7 @@ struct App {
             else if(puzzle.nearCube){ui.rect(w*.5-145,h*.62,290,46,{.02,.025,.02,.82});ui.outline(w*.5-145,h*.62,290,46,{.9,.6,.2,.7});ui.text("[ E ]  拾起加权方块",w*.5-92,h*.62+11,15,paper,true);}
             else if(puzzle.nearArmory&&!puzzle.armoryLooted){ui.rect(w*.5-145,h*.62,290,46,{.02,.025,.02,.82});ui.outline(w*.5-145,h*.62,290,46,{.2,.8,.4,.7});ui.text("[ E ]  领取军火补给",w*.5-92,h*.62+11,15,paper,true);}
             if(zone==9&&showHud){
-                ui.text(puzzle.doorOpen?"军械库门：已开启":(puzzle.buttonOn?"地板按钮：按下":"地板按钮：把方块放到中路按钮上"),40,96,12,{.7,.72,.66,.9},true);
+                ui.text(puzzle.doorOpenT>.95f?"军械库门：已开启":(puzzle.doorOpen?"军械库门：开启中…":(puzzle.buttonOn?"地板按钮：按下":"地板按钮：把方块放到中路按钮上")),40,96,12,{.7,.72,.66,.9},true);
             }
         }else if(screen==Screen::Home){
             ui.rect(0,0,w,h,{.015,.02,.017,.68});ui.rect(0,0,w*.52,h,{.02,.025,.021,.91});
@@ -800,7 +815,9 @@ struct App {
             // Soft wall push so the cube stays in-bounds.
             if(std::abs(puzzle.cubePos.x)>17.2f){puzzle.cubePos.x=std::clamp(puzzle.cubePos.x,-17.2f,17.2f);puzzle.cubeVel.x*=-.3f;}
             if(puzzle.cubePos.z>23.f||puzzle.cubePos.z<-25.f){puzzle.cubePos.z=std::clamp(puzzle.cubePos.z,-25.f,23.f);puzzle.cubeVel.z*=-.3f;}
-            if(!puzzle.doorOpen&&insideBox(puzzle.cubePos.x,puzzle.cubePos.z,13.2f,-8.f,.35f,1.4f,.1f)){
+            if(!puzzle.doorBlocking()&&insideBox(puzzle.cubePos.x,puzzle.cubePos.z,13.2f,-8.f,.35f,1.4f,.1f)){
+                // passing through opening
+            }else if(puzzle.doorBlocking()&&insideBox(puzzle.cubePos.x,puzzle.cubePos.z,13.2f,-8.f,.35f,1.4f,.1f)){
                 puzzle.cubePos.x=12.7f;puzzle.cubeVel.x=std::min(puzzle.cubeVel.x,0.f);
             }
             const float floor=groundHeight(puzzle.cubePos.x,puzzle.cubePos.z)+.32f;
@@ -817,15 +834,42 @@ struct App {
         const bool playerOnBtn=insideCircle(camera.x,camera.z,0.f,5.4f,.85f)&&feetY<0.35f;
         const bool cubeOnBtn=!puzzle.cubeHeld&&insideCircle(puzzle.cubePos.x,puzzle.cubePos.z,0.f,5.4f,.85f)&&puzzle.cubePos.y<0.9f;
         const bool wasOn=puzzle.buttonOn;
+        const bool wasOpen=puzzle.doorOpen;
         puzzle.buttonOn=playerOnBtn||cubeOnBtn;
         if(puzzle.buttonOn) puzzle.doorOpen=true;
-        if(puzzle.buttonOn!=wasOn) uiDirty=true;
+        if(puzzle.buttonOn&&!wasOn){audio.playButton();uiDirty=true;}
+        if(puzzle.doorOpen&&!wasOpen){audio.playDoor();uiDirty=true;}
+        const float doorTarget=puzzle.doorOpen?1.f:0.f;
+        puzzle.doorOpenT+=(doorTarget-puzzle.doorOpenT)*(1.f-std::exp(-3.2f*dt));
 
         const float cdx=camera.x-puzzle.cubePos.x,cdz=camera.z-puzzle.cubePos.z;
         const bool nowCube=!puzzle.cubeHeld&&(cdx*cdx+cdz*cdz)<2.6f;
         if(nowCube!=puzzle.nearCube){puzzle.nearCube=nowCube;uiDirty=true;}
-        const bool nowArmory=puzzle.doorOpen&&insideBox(camera.x,camera.z,15.0f,-8.f,1.2f,1.1f,.2f);
+        const bool nowArmory=puzzle.doorOpenT>.7f&&insideBox(camera.x,camera.z,15.0f,-8.f,1.2f,1.1f,.2f);
         if(nowArmory!=puzzle.nearArmory){puzzle.nearArmory=nowArmory;uiDirty=true;}
+    }
+
+    void updatePortalPreview(){
+        previewOn=false;
+        previewOk=false;
+        if(screen!=Screen::Playing||weapons.current!=WeaponId::PortalGun)return;
+        previewBlue=!mouseRight; // idle/default blue; while holding RMB aiming orange
+        if(mouseRight) previewBlue=false;
+        else previewBlue=true;
+        const RayHit hit=sceneRaycast(zone,camera,aimDirection(false),weapons.destroyedMask,weapons.targetMask,42.f,&puzzle);
+        if(!hit.hit)return;
+        previewOn=true;
+        previewPos=hit.pos+vnormalize(hit.normal)*.05f;
+        previewN=vnormalize(hit.normal);
+        previewOk=!(hit.material==27||hit.material==28||hit.material==29||hit.material==30||hit.material==31||hit.material==33
+                    ||(std::abs(hit.normal.y)>.82f&&hit.material==1));
+        if(previewOk){
+            const PortalDisk& other=previewBlue?weapons.orange:weapons.blue;
+            if(other.active){
+                const Vec3 d=previewPos-other.pos;
+                if(vdot(d,d)<1.2f)previewOk=false;
+            }
+        }
     }
 
     static float repeated(float value,float offset,float period){float q=std::fmod(value+offset,period);if(q<0)q+=period;return q-period*.5f;}
@@ -852,6 +896,8 @@ struct App {
             if(std::abs(x-6.4f)<.7f&&std::abs(z+16.2f)<.7f)result=std::max(result,1.1f);
             if(std::abs(x-2.f)<4.5f&&std::abs(z+20.f)<3.2f)result=std::max(result,.24f);
             if(std::abs(x+8.f)<4.f&&std::abs(z+15.5f)<3.5f)result=std::max(result,.24f);
+            // Long A pit floor sits below grade.
+            if(std::abs(x-10.9f)<2.2f&&std::abs(z+11.5f)<1.45f)result=-.55f;
             if(std::abs(x+3.4f)<.7f&&std::abs(z-13.2f)<.55f&&!(weapons.destroyedMask&1u))result=std::max(result,1.1f);
             if(std::abs(x-3.2f)<.6f&&std::abs(z-13.4f)<.5f&&!(weapons.destroyedMask&2u))result=std::max(result,1.1f);
             if(std::abs(x+1.1f)<.55f&&std::abs(z-2.2f)<.45f&&!(weapons.destroyedMask&4u))result=std::max(result,.9f);
@@ -893,8 +939,10 @@ struct App {
             if(!(weapons.destroyedMask&128u)&&insideBox(x,z,-1.2f,-18.5f,.7f,.55f))return true;
             if(!(weapons.destroyedMask&256u)&&insideBox(x,z,4.8f,-21.5f,.65f,.55f))return true;
             // Puzzle door + armory shell
-            if(!puzzle.doorOpen&&insideBox(x,z,13.2f,-8.f,.25f,1.4f))return true;
+            if(puzzle.doorBlocking()&&insideBox(x,z,13.2f,-8.f,.25f,1.4f))return true;
             if(insideBox(x,z,16.4f,-8.f,.25f,1.6f)||insideBox(x,z,14.8f,-6.4f,1.4f,.25f)||insideBox(x,z,14.8f,-9.6f,1.4f,.25f))return true;
+            // Long A pit rim
+            if(insideBox(x,z,8.55f,-11.5f,.2f,1.7f)||insideBox(x,z,13.25f,-11.5f,.2f,1.7f))return true;
             return false;
         }
         if(std::abs(x)>10.7f||z<-25.f||z>10.5f)return true;
@@ -946,7 +994,7 @@ struct App {
                 if(event.button.button==SDL_BUTTON_LEFT)mouseLeft=false;
                 else if(event.button.button==SDL_BUTTON_RIGHT)mouseRight=false;
             }else if(event.type==SDL_MOUSEWHEEL&&screen==Screen::Playing){
-                weapons.cycle(event.wheel.y>0?-1:1);uiDirty=true;
+                weapons.cycle(event.wheel.y>0?-1:1);audio.playSwap();uiDirty=true;
             } else if (event.type == SDL_KEYDOWN && !event.key.repeat) {
                 const int sc = event.key.keysym.scancode;
                 if(sc==SC_ESCAPE){if(screen==Screen::Home){returnScreen=Screen::Home;setScreen(Screen::ConfirmQuit);}else navigateBack();}
@@ -955,16 +1003,16 @@ struct App {
                         int count=0;const Uint8* key=SDL_GetKeyboardState(&count);
                         const bool shift=SC_LSHIFT<count&&key[SC_LSHIFT];
                         setZone(zone+(shift?-1:1));
-                    }else if(sc==SC_Q){weapons.selectPrevious();uiDirty=true;}
+                    }                    else if(sc==SC_Q){weapons.selectPrevious();audio.playSwap();uiDirty=true;}
                     else if(sc==SC_E)interact();
                     else if(sc==SC_R)beginReload();
                     else if(sc==SC_F){weapons.resetArena();puzzle.reset();uiDirty=true;}
                     else if(sc==SC_G&&puzzle.cubeHeld)dropCube(true);
                     else if(sc==SC_SPACE)jumpRequested=true;
                     else if(sc==SC_M){showHud=!showHud;settings.hud=showHud;saveSettings(settings);uiDirty=true;}
-                    else if(sc==SC_1){weapons.select(WeaponId::PortalGun);uiDirty=true;}
-                    else if(sc==SC_2){weapons.select(WeaponId::Usp);uiDirty=true;}
-                    else if(sc==SC_3){weapons.select(WeaponId::Ak47);uiDirty=true;}
+                    else if(sc==SC_1){weapons.select(WeaponId::PortalGun);audio.playSwap();uiDirty=true;}
+                    else if(sc==SC_2){weapons.select(WeaponId::Usp);audio.playSwap();uiDirty=true;}
+                    else if(sc==SC_3){weapons.select(WeaponId::Ak47);audio.playSwap();uiDirty=true;}
                 }else if(sc==SC_UP||sc==SC_W)moveSelection(-1);
                 else if(sc==SC_DOWN||sc==SC_S)moveSelection(1);
                 else if((sc==SC_LEFT||sc==SC_A)&&screen==Screen::Settings)adjustSetting(-1);
@@ -982,6 +1030,9 @@ struct App {
         weapons.recoil=std::max(0.f,weapons.recoil-dt*2.8f);
         weapons.hitMarker=std::max(0.f,weapons.hitMarker-dt*3.5f);
         weapons.sway=std::max(0.f,weapons.sway-dt*2.5f);
+        weapons.swapT=std::max(0.f,weapons.swapT-dt*4.5f);
+        weapons.denyFlash=std::max(0.f,weapons.denyFlash-dt*3.8f);
+        weapons.viewPunch=std::max(0.f,weapons.viewPunch-dt*5.5f);
         for(float& life:weapons.impactLife) life=std::max(0.f,life-dt*1.6f);
         if(weapons.reloading){
             weapons.reloadLeft-=dt;
@@ -1066,6 +1117,7 @@ struct App {
 
         tryPortalTeleport();
         updatePuzzle(dt);
+        updatePortalPreview();
 
         playerMoving=std::hypot(camera.x-oldX,camera.z-oldZ)>.0001f;
         if(playerMoving){
@@ -1105,7 +1157,7 @@ struct App {
         gl.Uniform2f(uResolution, static_cast<float>(sceneW), static_cast<float>(sceneH));
         gl.Uniform1f(uTime, seconds);
         gl.Uniform3f(uCamera, camera.x, camera.y, camera.z);
-        gl.Uniform2f(uYawPitch, yaw, pitch);
+        gl.Uniform2f(uYawPitch, yaw, pitch - weapons.viewPunch * .035f);
         gl.Uniform1i(uZone, zone);
         gl.Uniform1i(uMask, static_cast<int>(collectedMask));
         const Vec3 seal=zoneSeal(zone);gl.Uniform2f(uSeal,seal.x,seal.z);
@@ -1137,8 +1189,15 @@ struct App {
         gl.Uniform1f(uReload, reloadT);
         gl.Uniform3f(uCubePos, puzzle.cubePos.x, puzzle.cubePos.y, puzzle.cubePos.z);
         gl.Uniform1i(uButtonOn, puzzle.buttonOn ? 1 : 0);
-        gl.Uniform1i(uDoorOpen, puzzle.doorOpen ? 1 : 0);
+        gl.Uniform1f(uDoorOpenT, puzzle.doorOpenT);
         gl.Uniform1i(uCubeAlive, zone == 9 ? 1 : 0);
+        gl.Uniform1f(uSwap, weapons.swapT);
+        gl.Uniform1f(uDeny, weapons.denyFlash);
+        gl.Uniform1i(uPreviewOn, previewOn ? 1 : 0);
+        gl.Uniform1i(uPreviewOk, previewOk ? 1 : 0);
+        gl.Uniform1i(uPreviewBlue, previewBlue ? 1 : 0);
+        gl.Uniform3f(uPreviewPos, previewPos.x, previewPos.y, previewPos.z);
+        gl.Uniform3f(uPreviewN, previewN.x, previewN.y, previewN.z);
         gl.DrawArrays(GL_TRIANGLES, 0, 3);
 
         gl.BindFramebuffer(GL_READ_FRAMEBUFFER, sceneFbo);

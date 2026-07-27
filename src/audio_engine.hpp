@@ -40,6 +40,21 @@ public:
         sfxEnvelope_=.85f;
         sfxClock_=0.f;
     }
+    void playButton(){
+        sfxKind_=6;
+        sfxEnvelope_=.9f;
+        sfxClock_=0.f;
+    }
+    void playDoor(){
+        sfxKind_=7;
+        sfxEnvelope_=.85f;
+        sfxClock_=0.f;
+    }
+    void playSwap(){
+        sfxKind_=8;
+        sfxEnvelope_=.55f;
+        sfxClock_=0.f;
+    }
 
     void update(int zone,bool moving,float footGain=1.f){
         if(!device_)return;
@@ -75,6 +90,14 @@ public:
                     burst=.18f*noise*std::exp(-sfxClock_*14.f)+.08f*std::sin(tau*220.f*sfxClock_)*std::exp(-sfxClock_*8.f);
                 }else if(sfxKind_==5){ // target hit
                     burst=.22f*std::sin(tau*(760.f-sfxClock_*200.f)*sfxClock_)*std::exp(-sfxClock_*10.f);
+                }else if(sfxKind_==6){ // button
+                    burst=.2f*std::sin(tau*(180.f+sfxClock_*40.f)*sfxClock_)*std::exp(-sfxClock_*7.f)
+                        +.1f*noise*std::exp(-sfxClock_*12.f);
+                }else if(sfxKind_==7){ // door rumble
+                    burst=.25f*std::sin(tau*(70.f+sfxClock_*30.f)*sfxClock_)*std::exp(-sfxClock_*4.5f)
+                        +.12f*noiseSmooth_*std::exp(-sfxClock_*6.f);
+                }else if(sfxKind_==8){ // weapon swap click
+                    burst=.14f*noise*std::exp(-sfxClock_*18.f)+.08f*std::sin(tau*320.f*sfxClock_)*std::exp(-sfxClock_*14.f);
                 }
                 s+=burst*sfxEnvelope_;
                 sfxEnvelope_*=sfxKind_==3?.991f:.986f;
