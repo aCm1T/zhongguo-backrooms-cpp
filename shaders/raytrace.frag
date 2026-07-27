@@ -45,6 +45,18 @@ uniform int uPreviewOk;
 uniform int uPreviewBlue;
 uniform vec3 uPreviewPos;
 uniform vec3 uPreviewN;
+uniform float uFovScale;
+uniform int uLaserSegs;
+uniform int uLaserPowered;
+uniform vec3 uLaserA0;
+uniform vec3 uLaserB0;
+uniform vec3 uLaserA1;
+uniform vec3 uLaserB1;
+uniform vec3 uLaserA2;
+uniform vec3 uLaserB2;
+uniform vec3 uEmitterPos;
+uniform vec3 uCatcherPos;
+uniform float uAmmoFrac;
 
 #define MAX_STEPS 92
 #define MAX_DIST 70.0
@@ -355,6 +367,17 @@ vec2 mapDust2(vec3 p) {
     r = take(r, sdBox(p - vec3(14.8, 2.0, -6.4), vec3(1.4, 2.0, 0.25)), 19.0);
     r = take(r, sdBox(p - vec3(14.8, 2.0, -9.6), vec3(1.4, 2.0, 0.25)), 19.0);
 
+    // Laser emitter + catcher props
+    r = take(r, sdBox(p - uEmitterPos, vec3(0.18, 0.18, 0.22)), 38.0);
+    r = take(r, sdCylinder((p - (uEmitterPos + vec3(0.28, 0.0, 0.0))).zyx, 0.07, 0.12), 38.0);
+    r = take(r, sdBox(p - uCatcherPos, vec3(0.22, 0.28, 0.18)), uLaserPowered != 0 ? 40.0 : 39.0);
+    r = take(r, sdSphere(p - (uCatcherPos + vec3(-0.15, 0.0, 0.0)), 0.12), uLaserPowered != 0 ? 40.0 : 39.0);
+
+    // Laser-powered bridge over Long A pit
+    if (uLaserPowered != 0) {
+        r = take(r, sdBox(p - vec3(10.9, 0.08, -11.5), vec3(2.15, 0.08, 1.45)), 41.0);
+    }
+
     if (uCubeAlive != 0) {
         r = take(r, sdRoundBox(p - uCubePos, vec3(0.32, 0.32, 0.32), 0.04), 33.0);
     }
@@ -390,6 +413,12 @@ float portalDisk(vec3 p, vec3 center, vec3 n) {
     return min(ring, face);
 }
 
+float sdCapsule(vec3 p, vec3 a, vec3 b, float r) {
+    vec3 pa = p - a, ba = b - a;
+    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h) - r;
+}
+
 vec2 mapPortals(vec3 p, vec2 r) {
     if (uPortalBlueOn != 0) {
         r = take(r, portalDisk(p, uPortalBluePos, normalize(uPortalBlueN)), 24.0);
@@ -401,6 +430,9 @@ vec2 mapPortals(vec3 p, vec2 r) {
         float ghost = portalDisk(p, uPreviewPos, normalize(uPreviewN));
         r = take(r, ghost, uPreviewOk != 0 ? (uPreviewBlue != 0 ? 34.0 : 35.0) : 36.0);
     }
+    if (uLaserSegs > 0) r = take(r, sdCapsule(p, uLaserA0, uLaserB0, 0.035), 37.0);
+    if (uLaserSegs > 1) r = take(r, sdCapsule(p, uLaserA1, uLaserB1, 0.035), 37.0);
+    if (uLaserSegs > 2) r = take(r, sdCapsule(p, uLaserA2, uLaserB2, 0.035), 37.0);
     if (uImpactLife > .01) r = take(r, sdSphere(p - uImpactPos, .06 + .04 * (1.0 - uImpactLife)), 26.0);
     if (uImpactLife1 > .01) r = take(r, sdSphere(p - uImpactPos1, .05 + .04 * (1.0 - uImpactLife1)), 26.0);
     if (uImpactLife2 > .01) r = take(r, sdSphere(p - uImpactPos2, .05 + .04 * (1.0 - uImpactLife2)), 26.0);
@@ -524,6 +556,11 @@ vec3 palette(float id, vec3 p) {
     else if (id < 34.5) c = vec3(.25,.65,1.0);    // preview blue
     else if (id < 35.5) c = vec3(1.0,.5,.12);     // preview orange
     else if (id < 36.5) c = vec3(.9,.15,.12);      // preview invalid
+    else if (id < 37.5) c = vec3(1.0,.18,.12);     // laser beam
+    else if (id < 38.5) c = vec3(.55,.58,.62);      // emitter
+    else if (id < 39.5) c = vec3(.35,.12,.12);      // catcher off
+    else if (id < 40.5) c = vec3(1.0,.35,.12);      // catcher on
+    else if (id < 41.5) c = vec3(.45,.72,.85);      // laser bridge
     else c = vec3(.65,.86,.95);
     if (id == 3.0 && uZone == 1) {
         float brick = step(.92, fract(p.y * 2.4)) + step(.94, fract((p.z + floor(p.y*2.4)*.3)*1.2));
@@ -581,9 +618,13 @@ vec3 shadeSurface(vec3 ro, vec3 rd, vec2 hit, bool secondary) {
                    + step(30.5, hit.y) * step(hit.y, 31.5) * 2.2
                    + step(32.5, hit.y) * step(hit.y, 33.5) * (.25 + .2 * abs(sin(uTime * 2.0)))
                    + step(33.5, hit.y) * step(hit.y, 35.5) * 1.1
-                   + step(35.5, hit.y) * step(hit.y, 36.5) * (0.6 + 0.4 * abs(sin(uTime * 10.0)));
+                   + step(35.5, hit.y) * step(hit.y, 36.5) * (0.6 + 0.4 * abs(sin(uTime * 10.0)))
+                   + step(36.5, hit.y) * step(hit.y, 37.5) * 3.2
+                   + step(39.5, hit.y) * step(hit.y, 40.5) * 2.4
+                   + step(40.5, hit.y) * step(hit.y, 41.5) * (.4 + .3 * abs(sin(uTime * 2.5)));
     col += base * emissive * (hit.y < 21.5 ? 2.4 : (hit.y < 23.5 ? 1.25 : 1.6));
     if (hit.y > 33.5 && hit.y < 36.5) col *= 0.55; // ghost preview translucency feel
+    if (hit.y > 36.5 && hit.y < 37.5) col += vec3(1.0, .25, .1) * .35;
     if (hit.y > 32.5 && hit.y < 33.5) {
         // Heart stamp on the weighted cube.
         float hx = abs(mod(p.x + p.z, 0.64) - 0.32);
@@ -697,7 +738,7 @@ void main() {
     vec3 forward = normalize(vec3(sy*cp, sp, -cy*cp));
     vec3 right = normalize(vec3(cy, 0.0, sy));
     vec3 up = normalize(cross(right, forward));
-    vec3 rd = normalize(forward * 1.25 + right * uv.x + up * uv.y);
+    vec3 rd = normalize(forward * uFovScale + right * uv.x + up * uv.y);
     vec3 ro = uCamera;
 
     vec2 hit = trace(ro,rd,MAX_DIST);
@@ -766,12 +807,29 @@ void main() {
         float arm = 7.0 + uRecoil * 3.0;
         float crosshair = max(step(px.x, arm)*step(px.y, 0.7)*step(gap, px.x),
                               step(px.y, arm)*step(px.x, 0.7)*step(gap, px.y));
-        vec3 crossCol = uWeapon == 0 ? vec3(.45,.75,1.0) : vec3(.92,.88,.74);
+        vec3 crossCol = uWeapon == 0
+            ? (uPreviewOn == 0 ? vec3(.45,.75,1.0)
+               : (uPreviewOk != 0 ? (uPreviewBlue != 0 ? vec3(.35,.75,1.0) : vec3(1.0,.55,.2))
+                                  : vec3(.95,.2,.18)))
+            : vec3(.92,.88,.74);
         color = mix(color,crossCol,crosshair*.8);
         if (uHitMarker > .01) {
             float hm = max(step(abs(px.x-px.y), 1.1)*step(px.x, 10.0)*step(4.0, px.x),
                            step(abs(px.x+px.y), 1.1)*step(px.x, 10.0)*step(4.0, px.x));
             color = mix(color, vec3(1.0, .92, .55), hm * uHitMarker);
+        }
+        // Mag ammo fraction bar under crosshair.
+        if (uWeapon > 0) {
+            float half = 54.0 * clamp(uAmmoFrac, 0.0, 1.0);
+            float ammoBg = step(uResolution.x*.5-54.0, gl_FragCoord.x) *
+                           step(gl_FragCoord.x, uResolution.x*.5+54.0) *
+                           step(42.0, gl_FragCoord.y) * step(gl_FragCoord.y, 47.0);
+            float ammoFg = step(uResolution.x*.5-half, gl_FragCoord.x) *
+                           step(gl_FragCoord.x, uResolution.x*.5+half) *
+                           step(43.0, gl_FragCoord.y) * step(gl_FragCoord.y, 46.0);
+            color = mix(color, vec3(.12,.12,.11), ammoBg * .65);
+            vec3 ammoCol = uAmmoFrac < .2 ? vec3(.9,.25,.18) : vec3(.85,.78,.55);
+            color = mix(color, ammoCol, ammoFg * .9);
         }
         vec2 top = vec2(gl_FragCoord.x, uResolution.y-gl_FragCoord.y);
         for (int i=0;i<9;++i) {

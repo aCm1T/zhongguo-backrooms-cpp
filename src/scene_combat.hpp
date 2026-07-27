@@ -61,6 +61,15 @@ struct PuzzleState {
     bool armoryLooted{};
     bool nearCube{};
     bool nearArmory{};
+    bool laserPowered{};
+    bool laserWasPowered{};
+    Vec3 laserA[4]{};
+    Vec3 laserB[4]{};
+    int laserSegs{};
+
+    static constexpr Vec3 kEmitterPos{-3.15f, 1.4f, 4.5f};
+    static constexpr Vec3 kEmitterDir{1.f, 0.f, 0.f};
+    static constexpr Vec3 kCatcherPos{3.15f, 1.4f, -2.8f};
 
     void reset() {
         cubePos = {2.2f, .42f, 14.2f};
@@ -73,6 +82,9 @@ struct PuzzleState {
         armoryLooted = false;
         nearCube = false;
         nearArmory = false;
+        laserPowered = false;
+        laserWasPowered = false;
+        laserSegs = 0;
     }
     bool doorBlocking() const { return doorOpenT < .72f; }
 };

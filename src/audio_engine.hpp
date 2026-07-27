@@ -55,6 +55,16 @@ public:
         sfxEnvelope_=.55f;
         sfxClock_=0.f;
     }
+    void playLaser(){
+        sfxKind_=9;
+        sfxEnvelope_=.8f;
+        sfxClock_=0.f;
+    }
+    void playLand(float hardness){
+        sfxKind_=10;
+        sfxEnvelope_=std::clamp(hardness,.25f,1.f);
+        sfxClock_=0.f;
+    }
 
     void update(int zone,bool moving,float footGain=1.f){
         if(!device_)return;
@@ -98,6 +108,11 @@ public:
                         +.12f*noiseSmooth_*std::exp(-sfxClock_*6.f);
                 }else if(sfxKind_==8){ // weapon swap click
                     burst=.14f*noise*std::exp(-sfxClock_*18.f)+.08f*std::sin(tau*320.f*sfxClock_)*std::exp(-sfxClock_*14.f);
+                }else if(sfxKind_==9){ // laser lock
+                    burst=.18f*std::sin(tau*(640.f+sfxClock_*120.f)*sfxClock_)*std::exp(-sfxClock_*5.f)
+                        +.1f*std::sin(tau*220.f*sfxClock_);
+                }else if(sfxKind_==10){ // hard land
+                    burst=(noise*.4f+.15f*std::sin(tau*90.f*sfxClock_))*sfxEnvelope_*std::exp(-sfxClock_*14.f);
                 }
                 s+=burst*sfxEnvelope_;
                 sfxEnvelope_*=sfxKind_==3?.991f:.986f;

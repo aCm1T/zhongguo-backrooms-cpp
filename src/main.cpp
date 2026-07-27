@@ -258,9 +258,15 @@ struct App {
     GLint uDestroyedMask{}, uTargetMask{}, uHitMarker{}, uSpread{}, uMoveSway{};
     GLint uReload{}, uCubePos{}, uButtonOn{}, uDoorOpenT{}, uCubeAlive{};
     GLint uSwap{}, uDeny{}, uPreviewOn{}, uPreviewOk{}, uPreviewBlue{}, uPreviewPos{}, uPreviewN{};
+    GLint uFovScale{}, uLaserSegs{}, uLaserPowered{};
+    GLint uLaserA0{}, uLaserB0{}, uLaserA1{}, uLaserB1{}, uLaserA2{}, uLaserB2{};
+    GLint uEmitterPos{}, uCatcherPos{}, uAmmoFrac{};
     GLint uUiOverlayTex{};
     bool previewOn{}, previewOk{}, previewBlue{true};
     Vec3 previewPos{}, previewN{0.f, 0.f, 1.f};
+    float fovScale{1.25f};
+    float fallPeakY{};
+    bool trackingFall{};
 
     void initialize(QualityPreference qualityPreference) {
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0)
@@ -350,6 +356,18 @@ struct App {
         uPreviewBlue=gl.GetUniformLocation(program,"uPreviewBlue");
         uPreviewPos=gl.GetUniformLocation(program,"uPreviewPos");
         uPreviewN=gl.GetUniformLocation(program,"uPreviewN");
+        uFovScale=gl.GetUniformLocation(program,"uFovScale");
+        uLaserSegs=gl.GetUniformLocation(program,"uLaserSegs");
+        uLaserPowered=gl.GetUniformLocation(program,"uLaserPowered");
+        uLaserA0=gl.GetUniformLocation(program,"uLaserA0");
+        uLaserB0=gl.GetUniformLocation(program,"uLaserB0");
+        uLaserA1=gl.GetUniformLocation(program,"uLaserA1");
+        uLaserB1=gl.GetUniformLocation(program,"uLaserB1");
+        uLaserA2=gl.GetUniformLocation(program,"uLaserA2");
+        uLaserB2=gl.GetUniformLocation(program,"uLaserB2");
+        uEmitterPos=gl.GetUniformLocation(program,"uEmitterPos");
+        uCatcherPos=gl.GetUniformLocation(program,"uCatcherPos");
+        uAmmoFrac=gl.GetUniformLocation(program,"uAmmoFrac");
         gl.UseProgram(uiProgram);
         uUiOverlayTex=gl.GetUniformLocation(uiProgram,"uUiTexture");
         gl.Uniform1i(uUiOverlayTex,0);
@@ -660,7 +678,10 @@ struct App {
             else if(puzzle.nearCube){ui.rect(w*.5-145,h*.62,290,46,{.02,.025,.02,.82});ui.outline(w*.5-145,h*.62,290,46,{.9,.6,.2,.7});ui.text("[ E ]  拾起加权方块",w*.5-92,h*.62+11,15,paper,true);}
             else if(puzzle.nearArmory&&!puzzle.armoryLooted){ui.rect(w*.5-145,h*.62,290,46,{.02,.025,.02,.82});ui.outline(w*.5-145,h*.62,290,46,{.2,.8,.4,.7});ui.text("[ E ]  领取军火补给",w*.5-92,h*.62+11,15,paper,true);}
             if(zone==9&&showHud){
-                ui.text(puzzle.doorOpenT>.95f?"军械库门：已开启":(puzzle.doorOpen?"军械库门：开启中…":(puzzle.buttonOn?"地板按钮：按下":"地板按钮：把方块放到中路按钮上")),40,96,12,{.7,.72,.66,.9},true);
+                std::string tip=puzzle.doorOpenT>.95f?"军械库门：已开启":(puzzle.doorOpen?"军械库门：开启中…":(puzzle.buttonOn?"地板按钮：按下":"地板按钮：把方块放到中路按钮上"));
+                tip+="  ·  激光：";
+                tip+=puzzle.laserPowered?"已接通（坑桥升起）":"用传送门把红光接到对侧接收器";
+                ui.text(tip,40,96,12,{.7,.72,.66,.9},true);
             }
         }else if(screen==Screen::Home){
             ui.rect(0,0,w,h,{.015,.02,.017,.68});ui.rect(0,0,w*.52,h,{.02,.025,.021,.91});
@@ -847,13 +868,108 @@ struct App {
         if(nowCube!=puzzle.nearCube){puzzle.nearCube=nowCube;uiDirty=true;}
         const bool nowArmory=puzzle.doorOpenT>.7f&&insideBox(camera.x,camera.z,15.0f,-8.f,1.2f,1.1f,.2f);
         if(nowArmory!=puzzle.nearArmory){puzzle.nearArmory=nowArmory;uiDirty=true;}
+
+        updateLaser();
+        if(puzzle.laserPowered&&!puzzle.laserWasPowered){audio.playLaser();uiDirty=true;}
+        puzzle.laserWasPowered=puzzle.laserPowered;
+    }
+
+    void updateLaser(){
+        puzzle.laserSegs=0;
+        puzzle.laserPowered=false;
+        if(zone!=9)return;
+
+        auto portalHitT=[&](const PortalDisk& portal,Vec3 origin,Vec3 dir)->float{
+            if(!portal.active)return -1.f;
+            const float denom=vdot(dir,portal.normal);
+            if(std::abs(denom)<1e-4f)return -1.f;
+            const float t=vdot(portal.pos-origin,portal.normal)/denom;
+            if(t<.08f)return -1.f;
+            const Vec3 p=origin+dir*t;
+            if(!portalContains(portal,p))return -1.f;
+            return t;
+        };
+
+        Vec3 origin=PuzzleState::kEmitterPos+PuzzleState::kEmitterDir*.35f;
+        Vec3 dir=PuzzleState::kEmitterDir;
+        constexpr float catcherR=.42f;
+
+        for(int bounce=0;bounce<3;++bounce){
+            float catcherT=-1.f;
+            {
+                const Vec3 oc=origin-PuzzleState::kCatcherPos;
+                const float b=vdot(oc,dir);
+                const float c=vdot(oc,oc)-catcherR*catcherR;
+                const float disc=b*b-c;
+                if(disc>=0.f){
+                    const float t=-b-std::sqrt(disc);
+                    if(t>.05f) catcherT=t;
+                }
+            }
+
+            RayHit hit=sceneRaycast(zone,origin,dir,weapons.destroyedMask,weapons.targetMask,36.f,&puzzle);
+            float worldT=hit.hit?hit.t:36.f;
+            const float blueT=portalHitT(weapons.blue,origin,dir);
+            const float orangeT=portalHitT(weapons.orange,origin,dir);
+
+            float bestPortalT=1e9f;
+            bool throughBlue=false;
+            if(blueT>0.f&&blueT<bestPortalT&&blueT<worldT){bestPortalT=blueT;throughBlue=true;}
+            if(orangeT>0.f&&orangeT<bestPortalT&&orangeT<worldT){bestPortalT=orangeT;throughBlue=false;}
+
+            if(catcherT>0.f&&catcherT<worldT&&catcherT<bestPortalT){
+                if(puzzle.laserSegs<3){
+                    puzzle.laserA[puzzle.laserSegs]=origin;
+                    puzzle.laserB[puzzle.laserSegs]=origin+dir*catcherT;
+                    ++puzzle.laserSegs;
+                }
+                puzzle.laserPowered=true;
+                return;
+            }
+
+            if(bestPortalT<1e8f&&weapons.blue.active&&weapons.orange.active){
+                if(puzzle.laserSegs<3){
+                    puzzle.laserA[puzzle.laserSegs]=origin;
+                    puzzle.laserB[puzzle.laserSegs]=origin+dir*bestPortalT;
+                    ++puzzle.laserSegs;
+                }
+                const PortalDisk& from=throughBlue?weapons.blue:weapons.orange;
+                const PortalDisk& to=throughBlue?weapons.orange:weapons.blue;
+                Vec3 up=std::abs(from.normal.y)>.92f?Vec3{1,0,0}:Vec3{0,1,0};
+                Vec3 fr=vnormalize(vcross(up,from.normal));
+                Vec3 fu=vcross(from.normal,fr);
+                up=std::abs(to.normal.y)>.92f?Vec3{1,0,0}:Vec3{0,1,0};
+                Vec3 tr=vnormalize(vcross(up,to.normal));
+                Vec3 tu=vcross(to.normal,tr);
+                tr=tr*-1.f;
+                auto xform=[&](Vec3 v){return tr*vdot(v,fr)+tu*vdot(v,fu)+to.normal*-vdot(v,from.normal);};
+                origin=to.pos+to.normal*.1f;
+                dir=vnormalize(xform(dir));
+                continue;
+            }
+
+            if(!hit.hit){
+                if(puzzle.laserSegs<3){
+                    puzzle.laserA[puzzle.laserSegs]=origin;
+                    puzzle.laserB[puzzle.laserSegs]=origin+dir*22.f;
+                    ++puzzle.laserSegs;
+                }
+                return;
+            }
+
+            if(puzzle.laserSegs<3){
+                puzzle.laserA[puzzle.laserSegs]=origin;
+                puzzle.laserB[puzzle.laserSegs]=hit.pos;
+                ++puzzle.laserSegs;
+            }
+            return;
+        }
     }
 
     void updatePortalPreview(){
         previewOn=false;
         previewOk=false;
         if(screen!=Screen::Playing||weapons.current!=WeaponId::PortalGun)return;
-        previewBlue=!mouseRight; // idle/default blue; while holding RMB aiming orange
         if(mouseRight) previewBlue=false;
         else previewBlue=true;
         const RayHit hit=sceneRaycast(zone,camera,aimDirection(false),weapons.destroyedMask,weapons.targetMask,42.f,&puzzle);
@@ -896,8 +1012,9 @@ struct App {
             if(std::abs(x-6.4f)<.7f&&std::abs(z+16.2f)<.7f)result=std::max(result,1.1f);
             if(std::abs(x-2.f)<4.5f&&std::abs(z+20.f)<3.2f)result=std::max(result,.24f);
             if(std::abs(x+8.f)<4.f&&std::abs(z+15.5f)<3.5f)result=std::max(result,.24f);
-            // Long A pit floor sits below grade.
-            if(std::abs(x-10.9f)<2.2f&&std::abs(z+11.5f)<1.45f)result=-.55f;
+            // Long A pit floor sits below grade unless laser bridge is up.
+            if(std::abs(x-10.9f)<2.2f&&std::abs(z+11.5f)<1.45f)
+                result=puzzle.laserPowered?.16f:-.55f;
             if(std::abs(x+3.4f)<.7f&&std::abs(z-13.2f)<.55f&&!(weapons.destroyedMask&1u))result=std::max(result,1.1f);
             if(std::abs(x-3.2f)<.6f&&std::abs(z-13.4f)<.5f&&!(weapons.destroyedMask&2u))result=std::max(result,1.1f);
             if(std::abs(x+1.1f)<.55f&&std::abs(z-2.2f)<.45f&&!(weapons.destroyedMask&4u))result=std::max(result,.9f);
@@ -1130,6 +1247,41 @@ struct App {
         const float bob=grounded&&playerMoving?std::sin(SDL_GetTicks()*.012f)*bobAmount:0.f;
         camera.y=feetY+eyeHeight+stepViewOffset+bob;
 
+        // Speed-based FOV punch (run opens, crouch/walk settles).
+        float targetFov=1.25f;
+        if(!grounded)targetFov=1.32f;
+        else if(playerMoving&&!quietWalking&&!crouching)targetFov=1.30f;
+        else if(crouching)targetFov=1.18f;
+        fovScale+=(targetFov-fovScale)*(1.f-std::exp(-6.f*dt));
+
+        // Soft fall recovery from deep pits / hard landings.
+        if(!grounded){
+            if(!trackingFall){trackingFall=true;fallPeakY=feetY;}
+            fallPeakY=std::max(fallPeakY,feetY);
+        }else if(trackingFall){
+            const float drop=fallPeakY-feetY;
+            if(drop>3.2f){
+                audio.playLand(std::min(1.f,drop/6.f));
+                weapons.viewPunch=std::min(1.f,weapons.viewPunch+.45f);
+                if(drop>5.5f||feetY<-1.2f){
+                    camera=zoneStart(zone);
+                    feetY=groundHeight(camera.x,camera.z);
+                    camera.y=feetY+eyeHeight;
+                    verticalVelocity=0;moveVelocity={};grounded=true;
+                    uiDirty=true;
+                }
+            }
+            trackingFall=false;
+        }
+        if(feetY<-2.5f){
+            camera=zoneStart(zone);
+            feetY=groundHeight(camera.x,camera.z);
+            camera.y=feetY+eyeHeight;
+            verticalVelocity=0;moveVelocity={};grounded=true;trackingFall=false;
+            audio.playLand(1.f);
+            uiDirty=true;
+        }
+
         // Spread model: crouch tightens, air/move opens the cone.
         const int wid=static_cast<int>(weapons.current);
         float desiredSpread=kWeapons[wid].baseSpread;
@@ -1198,6 +1350,21 @@ struct App {
         gl.Uniform1i(uPreviewBlue, previewBlue ? 1 : 0);
         gl.Uniform3f(uPreviewPos, previewPos.x, previewPos.y, previewPos.z);
         gl.Uniform3f(uPreviewN, previewN.x, previewN.y, previewN.z);
+        gl.Uniform1f(uFovScale, fovScale);
+        gl.Uniform1i(uLaserSegs, puzzle.laserSegs);
+        gl.Uniform1i(uLaserPowered, puzzle.laserPowered ? 1 : 0);
+        gl.Uniform3f(uLaserA0, puzzle.laserA[0].x, puzzle.laserA[0].y, puzzle.laserA[0].z);
+        gl.Uniform3f(uLaserB0, puzzle.laserB[0].x, puzzle.laserB[0].y, puzzle.laserB[0].z);
+        gl.Uniform3f(uLaserA1, puzzle.laserA[1].x, puzzle.laserA[1].y, puzzle.laserA[1].z);
+        gl.Uniform3f(uLaserB1, puzzle.laserB[1].x, puzzle.laserB[1].y, puzzle.laserB[1].z);
+        gl.Uniform3f(uLaserA2, puzzle.laserA[2].x, puzzle.laserA[2].y, puzzle.laserA[2].z);
+        gl.Uniform3f(uLaserB2, puzzle.laserB[2].x, puzzle.laserB[2].y, puzzle.laserB[2].z);
+        gl.Uniform3f(uEmitterPos, PuzzleState::kEmitterPos.x, PuzzleState::kEmitterPos.y, PuzzleState::kEmitterPos.z);
+        gl.Uniform3f(uCatcherPos, PuzzleState::kCatcherPos.x, PuzzleState::kCatcherPos.y, PuzzleState::kCatcherPos.z);
+        const int wid = static_cast<int>(weapons.current);
+        const float ammoFrac = (wid > 0 && kWeapons[wid].magSize > 0)
+            ? static_cast<float>(weapons.ammoMag[wid]) / static_cast<float>(kWeapons[wid].magSize) : 0.f;
+        gl.Uniform1f(uAmmoFrac, ammoFrac);
         gl.DrawArrays(GL_TRIANGLES, 0, 3);
 
         gl.BindFramebuffer(GL_READ_FRAMEBUFFER, sceneFbo);
