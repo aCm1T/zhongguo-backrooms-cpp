@@ -454,7 +454,7 @@ struct App {
         auto deny=[&](){weapons.denyFlash=1.f;weapons.cooldown=.12f;};
         if(!hit.hit||hit.t>42.f){deny();return;}
         if(hit.material==27||hit.material==28||hit.material==29||hit.material==30||hit.material==31||hit.material==33
-           ||hit.material==37||hit.material==39||hit.material==40||hit.material==41||hit.material==42){deny();return;}
+           ||hit.material==37||hit.material==38||hit.material==39||hit.material==40||hit.material==41||hit.material==42){deny();return;}
         // Prefer walls/structures over shallow floor placements for readable portals.
         if(std::abs(hit.normal.y)>.82f&&hit.material==1){deny();return;}
         const PortalDisk& other=blue?weapons.orange:weapons.blue;
@@ -515,7 +515,8 @@ struct App {
                     weapons.targetsDown=0;
                 }
                 uiDirty=true;
-            }else if(hit.material==5||hit.material==19||hit.material==13||hit.material==32||hit.material==33){
+            }else if(hit.material==5||hit.material==19||hit.material==13||hit.material==32||hit.material==33
+                     ||hit.material==38||hit.material==39||hit.material==40||hit.material==41||hit.material==42){
                 weapons.hitMarker=.55f;
             }
         }else{
@@ -1022,7 +1023,7 @@ struct App {
         previewPos=hit.pos+vnormalize(hit.normal)*.05f;
         previewN=vnormalize(hit.normal);
         previewOk=!(hit.material==27||hit.material==28||hit.material==29||hit.material==30||hit.material==31||hit.material==33
-                    ||hit.material==37||hit.material==39||hit.material==40||hit.material==41||hit.material==42
+                    ||hit.material==37||hit.material==38||hit.material==39||hit.material==40||hit.material==41||hit.material==42
                     ||(std::abs(hit.normal.y)>.82f&&hit.material==1));
         if(previewOk){
             const PortalDisk& other=previewBlue?weapons.orange:weapons.blue;
@@ -1185,7 +1186,7 @@ struct App {
     }
 
     void update(float dt) {
-        if(screen!=Screen::Playing){playerMoving=false;mouseLeft=mouseRight=false;audio.update(zone,false);return;}
+        if(screen!=Screen::Playing){playerMoving=false;mouseLeft=mouseRight=false;audio.setLaserHum(false);audio.update(zone,false);return;}
         weapons.cooldown=std::max(0.f,weapons.cooldown-dt);
         weapons.portalCooldown=std::max(0.f,weapons.portalCooldown-dt);
         weapons.muzzle=std::max(0.f,weapons.muzzle-dt*4.8f);
